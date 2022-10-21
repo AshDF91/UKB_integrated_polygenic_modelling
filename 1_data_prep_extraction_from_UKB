@@ -1,52 +1,1987 @@
-#####################################################################################################################
-#  Project: UKB ref 87818 - integrated prediction modelling 
-#           Breast cancer incidence and mortality in UK Biobank
-# Inputs: Raw data extractions from UK RAP 
-# Outputs: Interim cleaned datasets for separate variables or classes thereof; then, final datasets for analyses - 
-#          1) Breast cancer incidence modelling 
-#          2) Breast cancer mortality modelling 
-# Author: Ash Clift 
-# Date: 7th Sept 2022
-# Verions: 1 
-######################################################################################################################
-
-
 ## UK Biobank project reference #87818 ##
 
-###########################################################################
-#                           TABLE OF CONTENTS                             #
-###########################################################################
-# 1) Define distinct datasets for different 'classes' of variables        #
-# 2) Cleaning datasets prior to forming final study datasets (x2)         #
-# 3) Form final dataset for 1: breast cancer incidence modelling          #
-# 4) Form fninal dataset for 2: breast cancer mortality modelling         #
-###########################################################################
+********************************************************************************
+* Project: UKB_87818
+* Title: 1_data_cleaning
+* Inputs: separate interim datasets extracted from UK Biobank RAP
+* Outputs: cleaned .dta files, final study cohorts
+* Author: Ash Darnell-Fish 
+* Date: 12th Sept 2022, finished 21st Sept 2022; v1 
+********************************************************************************
+
+* There have been several .csv files extracted from the UKB RAP * 
+* Each are opened, processed and merged as necessary below * 
+
+********************************************************************************
+
+log using "UK Biobank\log\_1_data_cleaning.smcl", replace 
+
+******************************************
+* 1) Start with start_cohort - key dates *
+****************************************** 
+
+* Open start, base datset * 
+import delimited "UK Biobank\datasets\start_cohort_new.csv" 
+
+* Rename variables for ease of reference, and also merging later * 
+gen start_follow_up = date(p53_i0, "YMD")
+format start_follow_up %td 
+summ start_follow_up, det form 
+
+rename p54_i0 centre
+rename p21001_i0 bmi
+rename p189 townsend_score  
+rename p21000_i0 ethnic_group
+ 
+gen date_lost_follow_up = date(p191, "YMD")
+format date_lost_follow_up %td 
+summ date_lost_follow_up, det form 
+rename p190 reason_lost_follow_up 
+
+rename p21003_i0 age 
+
+* Drop two death data variables initially extracted - we have a specific ONS 
+* death register dataset * 
+drop p40000_i0 p40000_i1
+
+* Use p31 (biological sex, as reported at assessment centre) to drop men * 
+count if p31=="Female" 
+keep if p31=="Female" 
+
+* Slim down to salient vars; save in .dta format for later merging and analyses * 
+keep eid age start_follow_up date_lost_follow_up centre bmi townsend_score ethnic_group
+save "UK Biobank\datasets\start_cohort.dta", replace  
+
+* Also save eids only, so that we can remove biological men from later datasets * 
+keep eid start_follow_up
+save "UK Biobank\datasets\female_eids.dta", replace  
+
+clear all 
+
+********************************************************************************
+********************************************************************************
 
 
-###########################################################################
-# 1)  #
-###########################################################################
+
+***************************
+* 2) Deaths register data * 
+***************************
+
+* Open base dataset * 
+import delimited "UK Biobank\datasets\death_data.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Rename variables for ease *
+* UKB has 2 instances of death... i0 and i1. 
+* There are breast cancer-related deaths in both, but not all 'arrays' have them. 
+* The arrays correspond to primary cause of death, and contributory causes of death. 
+* Based on review in UKB RAP cohort browser, the columns that have breast cancer codes in them
+* have been extracted * 
+ 
+* Note: p40000_i0 date_of_death1 
+*       p40000_i1 date_of_death2
+* Need to convert into 'nice' dates * 
+gen date_of_death1 = date(p40000_i0, "YMD")
+gen date_of_death2 = date(p40000_i1, "YMD")
+format date_of_death1 %td 
+format date_of_death2 %td 
+
+* Form single date of death * 
+gen date_death = . 
+replace date_death = date_of_death1 if date_of_death1!=. 
+replace date_death = date_of_death2 if date_of_death2!=.
+format date_death %td 
+summ date_death, det form 
+
+rename p40001_i0 primary_cause_death
+
+* Loop over arrays/columns that are contributory causes of death for instance 0 * 
+forval x = 1(1)9 {
+	rename p40002_i0_a`x' contributory_cause_death_`x'
+}
+
+rename p40002_i1_a3 contributory_cause_death_10 
+
+* Keep only those that have died * 
+keep if date_death!=. 
+count  // includes men, remember... 
+
+* Start sorting out the ICD10 death codes * 
+gen breast_cancer_death = 0 
+
+* Loop over all cause of death fields, if C50.9 is recorded, say that individual has breast cancer-related death * 
+* Tabbed out causes of death, only C50.9 is used *  
+foreach x in primary_cause_death contributory_cause_death_1 contributory_cause_death_2 /// 
+                                 contributory_cause_death_3 contributory_cause_death_4 contributory_cause_death_5  /// 
+                                 contributory_cause_death_6 contributory_cause_death_7 contributory_cause_death_8  ///
+                                 contributory_cause_death_9 contributory_cause_death_10 {
+	replace breast_cancer_death = 1 if `x'=="C50.9 Breast, unspecified"
+	
+}
+
+* Generate other cause death variable * 
+gen other_cause_death = 0 
+replace other_cause_death = 1 if breast_cancer_death!=1 
+
+* Generate composite 'what kind of death' variable for use in code later * 
+gen death_type = 0 
+replace death_type = 1 if breast_cancer_death==1 
+replace death_type = 2 if other_cause_death==1 
+tab death_type 
+count 
+
+* Keep salient variables for slimmed-down dataset * 
+keep eid date_death breast_cancer_death other_cause_death death_type 
+
+* Save this for later use * 
+save "UK Biobank\datasets\death_data.dta", replace 
+clear all
+
+********************************************************************************
+********************************************************************************
 
 
 
-###########################################################################
-# 2)  #
-###########################################################################
+************************************
+* 2) Cancer registry data - ICD10  * 
+************************************
+
+* There are two files - the first contains ICD10 codes, the second, ICD9 codes * 
+* Start with the former * 
+
+* These datasets have eid, and then rows in which an ICD10 code for breast cancer *
+import delimited "UK Biobank\datasets\cancer_registry_1.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Generate empty columns for each cancer of interest (event, or predictor), ready to make=1
+* if there is a record of this in the cancer registry. 
+* We only want prevalent cases of predictors (e.g. lung cancers diagnosed prior to start date). 
+* Therefore need 0/1 status and date - we will reassign if needed based on start date from start_cohort *  
+
+gen breast_cancer_registry = 0 
+gen breast_cancer_registry_date = .
+
+gen insitu_cancer_registry = 0 
+gen insitu_cancer_registry_date = . 
+
+gen lung_cancer_registry = 0 
+gen lung_cancer_registry_date = . 
+
+gen thyroid_cancer_registry = 0 
+gen thyroid_cancer_registry_date = . 
+
+gen blood_cancer_registry = 0 
+gen blood_cancer_registry_date = .
+
+gen gynae_cancer_registry = 0 
+gen gynae_cancer_registry_date = . 
+
+* Next, populate as a '1' if there is any record * 
+* Breast cancer * 
+foreach x in p40006_i0 p40006_i1 p40006_i2 p40006_i3 p40006_i4 p40006_i5 p40006_i6 {
+	replace breast_cancer_registry = 1 if `x'=="C50.0 Nipple and areola" | `x'=="C50.1 Central portion of breast" | 
+ `x'=="C50.2 Upper-inner quadrant of breast" | `x'=="C50.3 Lower-inner quadrant of breast" | `x'=="C50.4 Upper-outer quadrant of breast" | 
+`x'=="C50.5 Lower-outer quadrant of breast" | `x'=="C50.6 Axillary tail of breast" | `x'=="C50.8 Overlapping lesion of breast" | 
+`x'=="C50.9 Breast, unspecified" 
+}
+tab breast_cancer_registry
+
+* Breast carcinoma in situ, e.g. DCIS * 
+foreach x in p40006_i0 p40006_i1 p40006_i2 p40006_i3 p40006_i4 p40006_i5 p40006_i6 {
+	replace insitu_cancer_registry = 1 if `x'=="D05.0 Lobular carcinoma in situ" | `x'=="D05.1 Intraductal carcinoma in situ" | 
+`x'=="D05.7 Other carcinoma in situ of breast" | `x'=="D05.9 Carcinoma in situ of breast, unspecified"
+}
+tab insitu_cancer_registry 
+
+* Lung cancers * 
+foreach x in p40006_i0 p40006_i1 p40006_i2 p40006_i3 p40006_i4 p40006_i5 p40006_i6 {
+	replace lung_cancer_registry = 1 if `x'=="C34.0 Main bronchus" | `x'=="C34.1 Upper lobe, bronchus or lung" |
+ `x'=="C34.2 Middle lobe, bronchus or lung" | `x'=="C34.3 Lower lobe, bronchus or lung" | `x'=="C34.8 Overlapping lesion of bronchus and lung" |
+ `x'=="C34.9 Bronchus or lung, unspecified"
+}
+tab lung_cancer_registry 
+
+* Thyroid cancers * 
+foreach x in p40006_i0 p40006_i1 p40006_i2 p40006_i3 p40006_i4 p40006_i5 p40006_i6 {
+	replace thyroid_cancer_registry = 1 if `x'=="C73 Malignant neoplasm of thyroid gland"
+}
+tab thyroid_cancer_registry 
+
+* Haematological cancers * 
+foreach x in p40006_i0 p40006_i1 p40006_i2 p40006_i3 p40006_i4 p40006_i5 p40006_i6 {
+	replace blood_cancer_registry = 1 if `x'=="C81.0 Lymphocytic predominance" | `x'=="C81.1 Nodular sclerosis" | 
+`x'=="C81.2 Mixed cellularity" | `x'=="C81.3 Lymphocytic depletion" | `x'=="C81.7 Other Hodgkin's disease" | 
+`x'=="C81.9 Hodgkin's disease, unspecified" | `x'=="C82.0 Small cleaved cell, follicular" | `x'=="C82.1 Mixed small cleaved and large cell, follicular" | 
+`x'=="C82.2 Large cell, follicular" | `x'=="C82.3 Follicular lymphoma grade IIIa" | `x'=="C82.7 Other types of follicular non-Hodgkin's lymphoma" |
+ `x'=="C82.9 Follicular non-Hodgkin's lymphoma, unspecified" | `x'=="C83.0 Small cell (diffuse)" | `x'=="C83.1 Small cleaved cell (diffuse)" |
+ `x'=="C83.2 Mixed small and large cell (diffuse)" | `x'=="C83.3 Large cell (diffuse)" | `x'=="C83.4 Immunoblastic (diffuse)" |
+ `x'=="C83.7 Burkitt's tumour" | `x'=="C83.8 Other types of diffuse non-Hodgkin's lymphoma" | `x'=="C83.9 Diffuse non-Hodgkin's lymphoma, unspecified" | 
+`x'=="C84.0 Mycosis fungoides" | `x'=="C84.1 Sezary's diease" |`x'=="C84.4 Peripheral T-cell lymphoma" | `x'=="C84.5 Other and unspecified T-cell lymphomas" |
+`x'=="C84.8 Cutaneous T-cell lymphoma, unspecified" | `x'=="C85.0 Lymphosarcoma" | `x'=="C85.1 B-cell lymphoma, unspecified" |
+ `x'=="C85.7 Other specified types of non-Hodgkin's lymphoma" | `x'=="C85.9 Non-Hodgkin's lymphoma, unspecified type" |
+ `x'=="C86.2 Enteropathy-type (intestinal) T-cell lymphoma" | `x'=="C88.0 Waldenstrom's macroglobulinaemia" | 
+`x'=="C88.4 Extranodal marginal zone B-cell lymphoma of mucosa-associated lymphoid tissue [MALT-lymphoma]" | `x'=="C90.0 Multiple myeloma" |
+`x'=="C90.1 Plasma cell leukaemia" | `x'=="C90.2 Plasmacytoma, extramedullary" | `x'=="C90.3 Solitary plasmacytoma" |
+ `x'=="C91.0 Acute lymphoblastic leukaemia" | `x'=="C91.1 Chronic lymphocytic leukaemia" | `x'=="C91.3 Prolymphocytic leukaemia" |
+ `x'=="C91.4 Hairy-cell leukaemia" | `x'=="C91.5 Adult T-cell leukaemia" | `x'=="C91.9 Lymphoid leukaemia, unspecified" |
+ `x'=="C92.0 Acute myeloid leukaemia" | `x'=="C92.1 Chronic myeloid leukaemia" | `x'=="C92.3 Myeloid sarcoma" | `x'=="C92.4 Acute promyelocytic leukaemia" | 
+`x'=="C92.5 Acute myelomonocytic leukaemia" | `x'=="C92.7 Other myeloid leukaemia" | `x'=="C92.8 Acute myeloid leukaemia with multilineage dysplasia" |
+ `x'=="C92.9 Myeloid leukaemia, unspecified"  | `x'=="C93.0 Acute monocytic leukaemia" | `x'=="C93.1 Chronic monocytic leukaemia" |
+ `x'=="C94.4 Acute panmyelosis" | `x'=="C94.6 Myelodysplastic and myeloproliferative disease, not elsewhere classified" |
+ `x'=="C95.0 Acute leukaemia of unspecified cell type" | `x'=="C95.7 Other leukaemia of unspecified cell type" | `x'=="C95.9 Leukaemia, unspecified" | 
+`x'=="C96.1 Malignant histiocytosis" | `x'=="C96.2 Malignant mast cell tumour" | `x'=="C96.3 True histiocytic lymphoma" | 
+`x'=="C96.9 Malignant neoplasms of lymphoid, haematopoietic and related tissue, unspecified"
+}
+tab blood_cancer_registry 
+
+* Gynaecological cancers (non-cervical) * 
+foreach x in p40006_i0 p40006_i1 p40006_i2 p40006_i3 p40006_i4 p40006_i5 p40006_i6 {
+	replace gynae_cancer_registry = 1 if `x'=="C54.1 Endometrium" | `x'=="C54.0 Isthmus uteri" | `x'=="C54.2 Myometrium" | 
+`x'=="C54.3 Fundus uteri" | `x'=="C54.9 Corpus uteri, unspecified" | `x'=="C55 Malignant neoplasm of uterus, part unspecified" |
+ `x'=="C56 Malignant neoplasm of ovary" | `x'=="C57.0 Fallopian tube" | `x'=="C57.1 Broad ligament" | `x'=="C57.4 Uterine adnexa, unspecified" |
+ `x'=="C57.7 Other specified female genital organs" | `x'=="C57.8 Overlapping lesion of female genital organs" | `x'=="C57.9 Female genital organ, unspecified" 
+}
+tab gynae_cancer_registry
+
+
+* Now, sort out the dates to accompany these cases, where relevant *
+* Generate non-string dates * 
+
+gen date0 = date(p40005_i0, "YMD")
+gen date1 = date(p40005_i1, "YMD")
+gen date2 = date(p40005_i2, "YMD")
+gen date3 = date(p40005_i3, "YMD")
+gen date4 = date(p40005_i4, "YMD")
+gen date5 = date(p40005_i5, "YMD")
+gen date6 = date(p40005_i6, "YMD")
+format date0 %td 
+format date1 %td 
+format date2 %td 
+format date3 %td 
+format date4 %td
+format date5 %td 
+format date6 %td 
+
+* Set up a loop where each column of cancer type is scanned, if it contains an ICD10 code that is relevant
+* for the cancer of interest, replace the registry diagnosis date to its cognate (e.g. second record is breast,
+* so put the corresponding date for it* 
+* HOWEVER, note that some cancers may be recorded twice - later in time. 
+* Looping over instance 0, 1, ... 6 will mean the latest one will be 'diagnosis date'. We don't want this. 
+* What we want is the earliest record where cancer x was diagnosed. So, run the loop from instance 6 to instance 0 *
+  
+* NOTE - NOT ALL CANCER DATES HAVE A CORRESPONDING DIAGNOSIS... THERE IS SOME MISSING DATA * 
+
+* Breast cancer diagnosis dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace breast_cancer_registry_date = date`x' if p40006_i`x'=="C50.0 Nipple and areola" | 
+p40006_i`x'=="C50.1 Central portion of breast" | p40006_i`x'=="C50.2 Upper-inner quadrant of breast" | 
+p40006_i`x'=="C50.3 Lower-inner quadrant of breast" | p40006_i`x'=="C50.4 Upper-outer quadrant of breast" | 
+p40006_i`x'=="C50.5 Lower-outer quadrant of breast" | p40006_i`x'=="C50.6 Axillary tail of breast" | 
+p40006_i`x'=="C50.8 Overlapping lesion of breast" | p40006_i`x'=="C50.9 Breast, unspecified" 
+	}
+	
+
+* In situ breast tumour dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace insitu_cancer_registry_date = date`x' if p40006_i`x'=="D05.0 Lobular carcinoma in situ" | 
+p40006_i`x'=="D05.1 Intraductal carcinoma in situ" | p40006_i`x'=="D05.7 Other carcinoma in situ of breast" | 
+p40006_i`x'=="D05.9 Carcinoma in situ of breast, unspecified"
+}
+	
+* Lung cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace lung_cancer_registry_date = date`x' if p40006_i`x'=="C34.0 Main bronchus" | 
+p40006_i`x'=="C34.1 Upper lobe, bronchus or lung" | p40006_i`x'=="C34.2 Middle lobe, bronchus or lung" | 
+p40006_i`x'=="C34.3 Lower lobe, bronchus or lung" | p40006_i`x'=="C34.8 Overlapping lesion of bronchus and lung" | 
+p40006_i`x'=="C34.9 Bronchus or lung, unspecified"
+}
+
+* Thyroid cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace thyroid_cancer_registry_date = date`x' if p40006_i`x'=="C73 Malignant neoplasm of thyroid gland"
+}
+
+* Haematological cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace blood_cancer_registry_date = date`x' if p40006_i`x'=="C81.0 Lymphocytic predominance" | 
+p40006_i`x'=="C81.1 Nodular sclerosis" | p40006_i`x'=="C81.2 Mixed cellularity" | p40006_i`x'=="C81.3 Lymphocytic depletion" | 
+p40006_i`x'=="C81.7 Other Hodgkin's disease" | p40006_i`x'=="C81.9 Hodgkin's disease, unspecified" | 
+p40006_i`x'=="C82.0 Small cleaved cell, follicular" | p40006_i`x'=="C82.1 Mixed small cleaved and large cell, follicular" | 
+p40006_i`x'=="C82.2 Large cell, follicular" | p40006_i`x'=="C82.3 Follicular lymphoma grade IIIa" | 
+p40006_i`x'=="C82.7 Other types of follicular non-Hodgkin's lymphoma" | p40006_i`x'=="C82.9 Follicular non-Hodgkin's lymphoma, unspecified" | 
+p40006_i`x'=="C83.0 Small cell (diffuse)" | p40006_i`x'=="C83.1 Small cleaved cell (diffuse)" | 
+p40006_i`x'=="C83.2 Mixed small and large cell (diffuse)" | p40006_i`x'=="C83.3 Large cell (diffuse)" | 
+p40006_i`x'=="C83.4 Immunoblastic (diffuse)" | p40006_i`x'=="C83.7 Burkitt's tumour" | p40006_i`x'=="C83.8 Other types of diffuse non-Hodgkin's lymphoma" | 
+p40006_i`x'=="C83.9 Diffuse non-Hodgkin's lymphoma, unspecified" | p40006_i`x'=="C84.0 Mycosis fungoides" | 
+p40006_i`x'=="C84.1 Sezary's diease" | p40006_i`x'=="C84.4 Peripheral T-cell lymphoma" | p40006_i`x'=="C84.5 Other and unspecified T-cell lymphomas" | 
+p40006_i`x'=="C84.8 Cutaneous T-cell lymphoma, unspecified" | p40006_i`x'=="C85.0 Lymphosarcoma" | p40006_i`x'=="C85.1 B-cell lymphoma, unspecified" | 
+p40006_i`x'=="C85.7 Other specified types of non-Hodgkin's lymphoma" | p40006_i`x'=="C85.9 Non-Hodgkin's lymphoma, unspecified type" | 
+p40006_i`x'=="C86.2 Enteropathy-type (intestinal) T-cell lymphoma" | p40006_i`x'=="C88.0 Waldenstrom's macroglobulinaemia" | 
+p40006_i`x'=="C88.4 Extranodal marginal zone B-cell lymphoma of mucosa-associated lymphoid tissue [MALT-lymphoma]" | 
+p40006_i`x'=="C90.0 Multiple myeloma" | p40006_i`x'=="C90.1 Plasma cell leukaemia" | p40006_i`x'=="C90.2 Plasmacytoma, extramedullary" | 
+p40006_i`x'=="C90.3 Solitary plasmacytoma" | p40006_i`x'=="C91.0 Acute lymphoblastic leukaemia" | p40006_i`x'=="C91.1 Chronic lymphocytic leukaemia" | 
+p40006_i`x'=="C91.3 Prolymphocytic leukaemia" | p40006_i`x'=="C91.4 Hairy-cell leukaemia" | p40006_i`x'=="C91.5 Adult T-cell leukaemia" | 
+p40006_i`x'=="C91.9 Lymphoid leukaemia, unspecified" | p40006_i`x'=="C92.0 Acute myeloid leukaemia" | p40006_i`x'=="C92.1 Chronic myeloid leukaemia" | 
+p40006_i`x'=="C92.3 Myeloid sarcoma" | p40006_i`x'=="C92.4 Acute promyelocytic leukaemia" | p40006_i`x'=="C92.5 Acute myelomonocytic leukaemia" | 
+p40006_i`x'=="C92.7 Other myeloid leukaemia" | p40006_i`x'=="C92.8 Acute myeloid leukaemia with multilineage dysplasia" | 
+p40006_i`x'=="C92.9 Myeloid leukaemia, unspecified"  | p40006_i`x'=="C93.0 Acute monocytic leukaemia" | p40006_i`x'=="C93.1 Chronic monocytic leukaemia" | 
+p40006_i`x'=="C94.4 Acute panmyelosis" | p40006_i`x'=="C94.6 Myelodysplastic and myeloproliferative disease, not elsewhere classified" | 
+p40006_i`x'=="C95.0 Acute leukaemia of unspecified cell type" | p40006_i`x'=="C95.7 Other leukaemia of unspecified cell type" | 
+p40006_i`x'=="C95.9 Leukaemia, unspecified" | p40006_i`x'=="C96.1 Malignant histiocytosis" | p40006_i`x'=="C96.2 Malignant mast cell tumour" | 
+p40006_i`x'=="C96.3 True histiocytic lymphoma" | p40006_i`x'=="C96.9 Malignant neoplasms of lymphoid, haematopoietic and related tissue, unspecified"
+}
+
+* Gynaecological cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace gynae_cancer_registry_date = date`x' if p40006_i`x'=="C54.1 Endometrium" | p40006_i`x'=="C54.0 Isthmus uteri" | 
+p40006_i`x'=="C54.2 Myometrium" | p40006_i`x'=="C54.3 Fundus uteri" | p40006_i`x'=="C54.9 Corpus uteri, unspecified" | 
+p40006_i`x'=="C55 Malignant neoplasm of uterus, part unspecified" | p40006_i`x'=="C56 Malignant neoplasm of ovary" | 
+p40006_i`x'=="C57.0 Fallopian tube" | p40006_i`x'=="C57.1 Broad ligament" | p40006_i`x'=="C57.4 Uterine adnexa, unspecified" | 
+p40006_i`x'=="C57.7 Other specified female genital organs" | p40006_i`x'=="C57.8 Overlapping lesion of female genital organs" | 
+p40006_i`x'=="C57.9 Female genital organ, unspecified" 
+}
+
+* Make dates interpretable to humans * 
+format breast_cancer_registry_date %td 
+format insitu_cancer_registry_date %td 
+format lung_cancer_registry_date %td 
+format thyroid_cancer_registry_date %td 
+format blood_cancer_registry_date %td 
+format gynae_cancer_registry_date %td  
+
+* Only want to keep those that had case of cancer of interest - prevalent or incident is fine for now, 
+* we will sort out temporality when doing final merges for creating study dataset * 
+gen any_cancer = 0 
+replace any_cancer = breast_cancer_registry + insitu_cancer_registry + lung_cancer_registry + thyroid_cancer_registry + blood_cancer_registry  +gynae_cancer_registry
+* Sum up numbers - if anyone has a zero, they never had any of these cancers of interest recorded in the cancer registry * 
+summ any_cancer, det 
+* drop if zero - never had any of the cancers of interest * 
+drop if any_cancer==0 
+
+* Slim down dataset and save for later use * 
+keep eid breast_cancer_registry breast_cancer_registry_date insitu_cancer_registry insitu_cancer_registry_date lung_cancer_registry lung_cancer_registry_date thyroid_cancer_registry thyroid_cancer_registry_date blood_cancer_registry blood_cancer_registry_date gynae_cancer_registry gynae_cancer_registry_date
+
+save "UK Biobank\datasets\cancer_registry_icd10.dta", replace 
+
+clear all
+
+********************************************************************************
+********************************************************************************
 
 
 
-###########################################################################
-# 3)  #
-###########################################################################
+**********************************
+* 3) Cancer registry data - ICD9 * 
+**********************************
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\cancer_registry_2.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Generate empty columns for each cancer of interest (event, or predictor), ready to make=1
+* if there is a record of this in the cancer registry. 
+* We only want prevalent cases of predictors (e.g. lung cancers diagnosed prior to start date). 
+* Therefore need 0/1 status and date - we will reassign if needed based on start date from start_cohort *  
+
+gen breast_cancer_icd9 = 0 
+gen breast_cancer_icd9_date = .
+
+gen insitu_cancer_icd9 = 0 
+gen insitu_cancer_icd9_date = . 
+
+gen lung_cancer_icd9 = 0 
+gen lung_cancer_icd9_date = . 
+
+gen thyroid_cancer_icd9 = 0 
+gen thyroid_cancer_icd9_date = . 
+
+gen blood_cancer_icd9 = 0 
+gen blood_cancer_icd9_date = .
+
+gen gynae_cancer_icd9 = 0 
+gen gynae_cancer_icd9_date = . 
+
+
+* Next, populate as a '1' if there is any record * 
+* Breast cancer * 
+foreach x in p40013_i0 p40013_i0 p40013_i1 p40013_i2 p40013_i3 p40013_i4 p40013_i5 p40013_i6 {
+	replace breast_cancer_icd9 = 1 if `x'=="1740 Malignant neoplasm of female breast - nipple and areola" |
+ `x'=="1741 Malignant neoplasm of female breast - central portion" | `x'=="1742 Malignant neoplasm of female breast - upper-inner quadrant" | 
+`x'=="1743 Malignant neoplasm of female breast - lower-inner quadrant" | `x'=="1744 Malignant neoplasm of female breast - upper-outer quadrant" |
+ `x'=="1745 Malignant neoplasm of female breast - lower-outer quadrant" | `x'=="1746 Malignant neoplasm of female breast - axillary tail" |
+ `x'=="1748 Malignant neoplasm of female breast - other site" | `x'=="1749 Malignant neoplasm of female breast - unspecified site"
+}
+tab breast_cancer_icd9
+
+* Breast carcinoma in situ, e.g. DCIS * 
+foreach x in p40013_i0 p40013_i0 p40013_i1 p40013_i2 p40013_i3 p40013_i4 p40013_i5 p40013_i6{
+	replace insitu_cancer_icd9 = 1 if `x'=="2330 Carcinoma in situ of breast"
+}
+tab insitu_cancer_icd9
+
+* Lung cancers * 
+foreach x in p40013_i0 p40013_i0 p40013_i1 p40013_i2 p40013_i3 p40013_i4 p40013_i5 p40013_i6{
+	replace lung_cancer_icd9 = 1 if `x'=="1622 Malignant neoplasm of main bronchus" | `x'=="1623 Malignant neoplasm of upper lobe, bronchus or lung" |
+ `x'=="1624 Malignant neoplasm of middle lobe, bronchus or lung" | `x'=="1625 Malignant neoplasm of lower lobe, bronchus or lung" |
+ `x'=="1628 Malignant neoplasm of trachea, bronchus and lung, other" | `x'=="1629 Malignant neoplasm of bronchus and lung, unspecified" 
+	
+}
+tab lung_cancer_icd9 
+
+* Thyroid cancers * 
+foreach x in p40013_i0 p40013_i0 p40013_i1 p40013_i2 p40013_i3 p40013_i4 p40013_i5 p40013_i6 {
+	replace thyroid_cancer_icd9 = 1 if `x'=="193 Malignant neoplasm of thyroid gland"
+}
+tab thyroid_cancer_icd9 
+
+* Haematological cancers * 
+foreach x in p40013_i0 p40013_i0 p40013_i1 p40013_i2 p40013_i3 p40013_i4 p40013_i5 p40013_i6 {
+	replace blood_cancer_icd9 = 1 if `x'=="2000 Reticulosarcoma" | `x'=="2001 Lymphosarcoma"  | 
+`x'=="2008 Other named variants of reticulosarcoma and lymphosarcoma"  | `x'=="2014 Hodgkin's disease, lymphocytic-histiocytic predominance" |
+ `x'=="2015 Hodgkin's disease, nodular sclerosis" | `x'=="2016 Hodgkin's disease, mixed cellularity" | `x'=="2017 Hodgkin's disease, lymphocytic depletion" | 
+`x'=="2019 Hodgkin's disease, unspecified" | `x'=="2020 Nodular lymphoma" | `x'=="2021 Mycosis fungoides" | `x'=="2024 Leukaemic reticuloendotheliosis" |
+ `x'=="2028 Other lymphomas" | `x'=="2030 Multiple myeloma" | `x'=="2040 Acute lymphoid leukaemia"  | `x'=="2041 Chronic lymphoid leukaemia" |
+ `x'=="2049 Unspecified lymphoid leukaemia" | `x'=="2050 Acute myeloid leukaemia" | `x'=="2059 Unspecified myeloid leukaemia" |
+ `x'=="2061 Chronic monocytic leukaemia" | `x'=="207 Other specified leukaemia" | `x'=="2051 Chronic myeloid leukaemia" |
+ `x'=="2081 Chronic leukaemia of unspecified cell type"
+}
+tab blood_cancer_icd9 
+
+* Gynaecological cancers (non-cervical) * 
+foreach x in p40013_i0 p40013_i0 p40013_i1 p40013_i2 p40013_i3 p40013_i4 p40013_i5 p40013_i6 {
+	replace gynae_cancer_icd9 = 1 if `x'=="179 Malignant neoplasm of uterus, part unspecified" | `x'=="182 Malignant neoplasm of body of uterus" |
+ `x'=="1820 Malignant neoplasm of corpus uteri, except isthmus" | `x'=="1828 Malignant neoplasm of body of uterus - other" |
+ `x'=="1830 Malignant neoplasm of ovary" | `x'=="1832 Malignant neoplasm of fallopian tube" 
+}
+tab gynae_cancer_icd9
+
+
+* Now, sort out the dates to accompany these cases, where relevant *
+* Generate non-string dates * 
+gen date0 = date(p40005_i0, "YMD")
+gen date1 = date(p40005_i1, "YMD")
+gen date2 = date(p40005_i2, "YMD")
+gen date3 = date(p40005_i3, "YMD")
+gen date4 = date(p40005_i4, "YMD")
+gen date5 = date(p40005_i5, "YMD")
+gen date6 = date(p40005_i6, "YMD")
+format date0 %td 
+format date1 %td 
+format date2 %td 
+format date3 %td 
+format date4 %td
+format date5 %td 
+format date6 %td 
+
+
+* Breast cancer diagnosis dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace breast_cancer_icd9_date = date`x' if p40013_i`x'=="1740 Malignant neoplasm of female breast - nipple and areola" | 
+p40013_i`x'=="1741 Malignant neoplasm of female breast - central portion" | p40013_i`x'=="1742 Malignant neoplasm of female breast - upper-inner quadrant" |
+ p40013_i`x'=="1743 Malignant neoplasm of female breast - lower-inner quadrant" | p40013_i`x'=="1744 Malignant neoplasm of female breast - upper-outer quadrant" |
+ p40013_i`x'=="1745 Malignant neoplasm of female breast - lower-outer quadrant" | p40013_i`x'=="1746 Malignant neoplasm of female breast - axillary tail" |
+ p40013_i`x'=="1748 Malignant neoplasm of female breast - other site" | p40013_i`x'=="1749 Malignant neoplasm of female breast - unspecified site"
+}
+	
+
+* In situ breast tumour dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace insitu_cancer_icd9_date = date`x' if p40013_i`x'=="2330 Carcinoma in situ of breast"
+}
+	
+* Lung cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace lung_cancer_icd9_date = date`x' if p40013_i`x'=="1622 Malignant neoplasm of main bronchus" |
+ p40013_i`x'=="1623 Malignant neoplasm of upper lobe, bronchus or lung" | p40013_i`x'=="1624 Malignant neoplasm of middle lobe, bronchus or lung" | 
+p40013_i`x'=="1625 Malignant neoplasm of lower lobe, bronchus or lung" | p40013_i`x'=="1628 Malignant neoplasm of trachea, bronchus and lung, other" | 
+p40013_i`x'=="1629 Malignant neoplasm of bronchus and lung, unspecified" 
+}
+
+* Thyroid cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace thyroid_cancer_icd9_date = date`x' if p40013_i`x'=="193 Malignant neoplasm of thyroid gland"
+}
+
+* Haematological cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace blood_cancer_icd9_date = date`x' if p40013_i`x'=="2000 Reticulosarcoma" | p40013_i`x'=="2001 Lymphosarcoma"  | 
+p40013_i`x'=="2008 Other named variants of reticulosarcoma and lymphosarcoma"  | p40013_i`x'=="2014 Hodgkin's disease, lymphocytic-histiocytic predominance" | 
+p40013_i`x'=="2015 Hodgkin's disease, nodular sclerosis" | p40013_i`x'=="2016 Hodgkin's disease, mixed cellularity" | 
+p40013_i`x'=="2017 Hodgkin's disease, lymphocytic depletion" | p40013_i`x'=="2019 Hodgkin's disease, unspecified" | 
+p40013_i`x'=="2020 Nodular lymphoma" | p40013_i`x'=="2021 Mycosis fungoides" | p40013_i`x'=="2024 Leukaemic reticuloendotheliosis" | 
+p40013_i`x'=="2028 Other lymphomas" | p40013_i`x'=="2030 Multiple myeloma" | p40013_i`x'=="2040 Acute lymphoid leukaemia"  | 
+p40013_i`x'=="2041 Chronic lymphoid leukaemia" | p40013_i`x'=="2049 Unspecified lymphoid leukaemia" | p40013_i`x'=="2050 Acute myeloid leukaemia" | 
+p40013_i`x'=="2059 Unspecified myeloid leukaemia" | p40013_i`x'=="2061 Chronic monocytic leukaemia" | p40013_i`x'=="207 Other specified leukaemia" | 
+p40013_i`x'=="2051 Chronic myeloid leukaemia" | p40013_i`x'=="2081 Chronic leukaemia of unspecified cell type"
+}
+
+* Gynaecological cancer dates * 
+foreach x in 6 5 4 3 2 1 0 {
+	replace gynae_cancer_icd9_date = date`x' if p40013_i`x'=="179 Malignant neoplasm of uterus, part unspecified" | 
+p40013_i`x'=="182 Malignant neoplasm of body of uterus" | p40013_i`x'=="1820 Malignant neoplasm of corpus uteri, except isthmus" | 
+p40013_i`x'=="1828 Malignant neoplasm of body of uterus - other" | p40013_i`x'=="1830 Malignant neoplasm of ovary" | 
+p40013_i`x'=="1832 Malignant neoplasm of fallopian tube" 
+}
+
+
+* Make dates interpretable to humans * 
+format breast_cancer_icd9_date %td 
+format insitu_cancer_icd9_date %td 
+format lung_cancer_icd9_date %td 
+format thyroid_cancer_icd9_date %td 
+format blood_cancer_icd9_date %td 
+format gynae_cancer_icd9_date %td  
+
+
+* Only want to keep those that had case of cancer of interest - prevalent or incident is fine for now, 
+* we will sort out temporality when doing final merges for creating study dataset * 
+gen any_cancer = 0 
+replace any_cancer = breast_cancer_icd9 + insitu_cancer_icd9 + lung_cancer_icd9 + thyroid_cancer_icd9 + blood_cancer_icd9  + gynae_cancer_icd9
+* Sum up numbers - if anyone has a zero, they never had any of these cancers of interest recorded in the cancer registry * 
+summ any_cancer, det 
+* drop if zero - never had any of the cancers of interest * 
+drop if any_cancer==0 
+
+* Slim down dataset and save for later use * 
+keep eid breast_cancer_icd9 breast_cancer_icd9_date insitu_cancer_icd9 insitu_cancer_icd9_date lung_cancer_icd9 lung_cancer_icd9_date ///
+ thyroid_cancer_icd9 thyroid_cancer_icd9_date blood_cancer_icd9 blood_cancer_icd9_date gynae_cancer_icd9 gynae_cancer_icd9_date
+
+save "UK Biobank\datasets\cancer_registry_icd9.dta", replace 
+clear all
+
+********************************************************************************
+********************************************************************************
 
 
 
-###########################################################################
-# 4)  #
-###########################################################################
+*****************************
+* 4 ) Polygenic risk scores * 
+*****************************
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\polygenic_risk_scores.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Rename variables for ease of use * 
+rename p26220 prs_standard
+rename p26221 prs_enhanced 
+
+keep eid prs_standard prs_enhanced 
+
+save "UK Biobank\datasets\prs.dta", replace 
+clear all
+
+********************************************************************************
+********************************************************************************
 
 
 
-###########################################################################
-# 5)  #
-###########################################################################
+***********************************
+* 5) Reproductive history factors * 
+***********************************
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\reproductive_factors.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Sort out and relabel variables of interest * 
+* Age at menarche * 
+destring p2714_i0, replace force
+rename p2714_i0 age_menarche 
+summ age_menarche, det 
+count if age_menarche<10 
+count if age_menarche<8 
+* There are 2,010 with age at menarche < 10, 63 with menarche before 8 (0.02%) * 
+* For now, just keep 'as is', mirroring what data women may give to HCP if model used * 
+
+* Number of live births * 
+destring p2734_i0, replace force
+rename p2734_i0 number_births
+
+* Age at first birth * 
+destring p2754_i0, replace force
+rename p2754_i0 age_first_birth 
+* Note lot of missing values for this one... might not be able to include in modelling * 
+
+* Ever use of OCP * 
+gen ocp = 0 
+replace ocp = 1 if p2784_i0=="Yes" 
+
+* Ever use of HRT - will likely use the GP scripts data for this, but cheeky look * 
+gen hrt_ever = 0 
+replace hrt_ever = 1 if p2814_i0=="Yes" 
+
+* Had hysterectomy by time of attending assessment centre * 
+gen hysterectomy = 0 
+replace hysterectomy = 1 if p3591_i0=="Yes"
+
+* Slim down dataset and save * 
+keep eid age_menarche number_births age_first_birth ocp hrt hysterectomy
+save "UK Biobank\datasets\reproductive_factors.dta", replace 
+clear all
+
+********************************************************************************
+********************************************************************************
+
+
+
+*******************
+* 6) Smoking data * 
+*******************
+* Open source dataset * 
+import delimited "UK Biobank\datasets\smoking.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Current smoking status * 
+tab p20116_i0 
+gen current_smoker = 0 
+replace current_smoker = 1 if p20116_i0=="Current" 
+
+rename p3456_i0 cigs_per_day 
+destring cigs_per_day, replace force
+count if cigs_per_day==. & current_smoker==1  // includes occasional smokers 
+
+gen smoking_status = . 
+replace smoking_status = 0 if p20116_i0=="Never"      // non-smoker
+replace smoking_status = 1 if p20116_i0=="Previous"   // ex-smoker
+replace smoking_status = 2 if (current_smoker==1 & cigs_per_day<10)  // light smoker
+replace smoking_status = 3 if (current_smoker==1 & cigs_per_day>=10 & cigs_per_day<20) // moderate smoker 
+replace smoking_status = 4 if (current_smoker==1 & cigs_per_day>=20) // heavy smoker 
+tab smoking_status, m 
+
+la de smokes 0 "Never smoker" 1 "Previous smoker" 2 "Light smoker (1-9/d)" 3 "Moderate smoker (10-19/d)" 4 "Heavy smoker (20+/d)"
+la val smoking_status smokes 
+tab smoking_status, m 
+
+* Slim down dataset and save as smoking data file * 
+keep eid smoking_status 
+save "UK Biobank\datasets\smoking.dta", replace 
+clear all
+
+********************************************************************************
+********************************************************************************
+
+
+
+*********************************
+* 7) Alcohol intake at baseline * 
+*********************************
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\alcohol.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Current drinking status * 
+rename p20117_i0 alcohol_status 
+
+* Alcohol intake frequency * 
+rename p1558_i0 alcohol_frequency 
+
+* Average weekly red wine intake * 
+rename p1568_i0 average_week_red_wine 
+destring average_week_red_wine, replace force 
+
+* Average weekly champagne and white wine intake * 
+rename p1578_i0 average_week_champ_white
+destring average_week_champ_white, replace force 
+
+* Average weekly beer plus cider intake * 
+rename p1588_i0 average_week_beer_cider 
+destring average_week_beer_cider, replace force 
+
+* Average weekly spirits intake * 
+rename p1598_i0 average_week_spirit 
+destring average_week_spirit, replace force  
+
+* Average weekly fortified wine intake *
+rename p1608_i0 average_week_fortified 
+destring average_week_fortified, replace force  
+
+* Averae weekly other alcogolic drinks (e.g. alcopops) * 
+rename p5364_i0 average_week_other 
+destring average_week_other, replace force 
+
+** Note - the 'destring' reduces do not knows to missing ** 
+
+* Calculate total units per week * 
+* As per UKB Data Showcase, they suggested to participants how much there is in one 
+* serving/drink; we use units per standard size drink for each *
+
+* Red wine = 6 glasses in average bottle. How may glasses?  1 glass = 125mL * 
+* Champagne/white wine = 6 glasses in average bottle. 1 glass = 125mL, assume 12% ABV * 
+* Beers and ciders are in pints. Assume 5.5% ABV * 
+* Spirits are in measures, we'll use 25mL , assume 40% ABV *
+* Fortified wine, assume 50mL  *
+* Assume other drinks as alcopops, 1.5units in 5.5% 275mL * 
+* From NHS live well - alcohol advice *   
+
+* Impute 0 is not recorded, for the purposes of easy calculation * 
+
+foreach x in average_week_red_wine average_week_champ_white average_week_beer_cider average_week_spirit average_week_fortified average_week_other {
+	replace `x' = 0 if `x'==. 
+}
+
+gen units_week_red = 1.5*average_week_red_wine
+gen units_week_white = 1.5*average_week_champ_white
+gen units_week_beer = 2*average_week_beer_cider
+gen units_week_spirit = 1*average_week_spirit
+gen units_week_fort = 1*average_week_fortified
+gen units_week_other = 1.5*average_week_other
+
+gen units_per_week = units_week_red + units_week_white + units_week_beer + units_week_spirit + units_week_fort + units_week_other
+
+gen units_per_day = units_per_week/7 
+summ units_per_day, det 
+
+* Generate new alcohol intake variable in line with QResearch modelling * 
+gen alcohol_intake = . 
+replace alcohol_intake = 1 if alcohol_frequency=="Special occassions only"  // trivial drinker (<1u/d)
+replace alcohol_intake = 1 if alcohol_frequency=="One to three times a month" | units_per_day<1 
+* need to add in missings - if alcohol_status is missing, set to . 
+replace alcohol_intake = . if alcohol_status==""
+replace alcohol_intake = 2 if units_per_day>=1 & units_per_day<=2   // Light (1-2 u/d)
+replace alcohol_intake = 3 if units_per_day>2 & units_per_day<=6    // Moderate (3-6 u/d)
+replace alcohol_intake = 4 if units_per_day>6 & units_per_day<=9    // Heavy (7-9 u/d) 
+replace alcohol_intake = 5 if units_per_day>9                       // Very heavy (>9u/d)
+replace alcohol_intake = 0 if alcohol_status=="Never" | alcohol_frequency=="Never" // non-drinker  
+
+tab alcohol_intake, m 
+
+la de alcohols 0 "Non-drinker" 1 "Trivial drinker (<1u/d)" 2 "Light drinker (1-2u/d)" 3 "Moderate drinker (3-6u/d)" 4 "Heavy drinker (7-9u/d)" 5 "Very heavy drinker (>9u/d)"
+la val alcohol_intake alcohols
+
+tab alcohol_intake, m 
+
+* Slim down dataset and save * 
+keep eid alcohol_intake 
+save "UK Biobank\datasets\alcohol.dta", replace 
+clear all 
+
+********************************************************************************
+********************************************************************************
+
+
+
+****************************************
+* 8) Self-reported cancers at baseline * 
+****************************************
+* Open source dataset * 
+import delimited "UK Biobank\datasets\cancer_codes_selfreported.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Want to remove those that do not have any self-reported diagnoses *  
+count if p20001_i0==""
+drop if p20001_i0==""
+
+* Generate new variables - not just breast (event), but previous other cancers are 
+* predictors in models to be validated *  
+gen previous_breast_cancer = 0 
+gen previous_lung_cancer = 0 
+gen previous_thyroid_cancer = 0 
+gen previous_blood_cancer = 0 
+gen previous_gynae_cancer = 0 
+
+* Some people had multiple previous cancers, and these are all stored in the same string variable... 
+* e.g. vaginal cancer|basal cell carcinoma| ... ... 
+* Use strpos option to search strings for breast * 
+
+replace previous_breast_cancer = strpos(p20001_i0, "breast") > 0 
+replace previous_lung_cancer = strpos(p20001_i0, "lung") > 0
+replace previous_thyroid_cancer = strpos(p20001_i0, "thyroid") > 0  
+
+replace previous_blood_cancer = strpos(p20001_i0, "lymphoma") > 0 
+replace previous_blood_cancer = strpos(p20001_i0, "leukaemia") > 0 if previous_blood_cancer!=1 
+replace previous_blood_cancer = strpos(p20001_i0, "myeloma") > 0 if previous_blood_cancer!=1 
+replace previous_blood_cancer = strpos(p20001_i0, "myelofib") > 0 if previous_blood_cancer!=1 
+replace previous_blood_cancer = strpos(p20001_i0, "myeloid") > 0 if previous_blood_cancer!=1 
+replace previous_blood_cancer = strpos(p20001_i0, "lymphocytic") > 0 if previous_blood_cancer!=1 
+
+replace previous_gynae_cancer = strpos(p20001_i0, "ovarian") > 0 if previous_gynae_cancer!=1 
+replace previous_gynae_cancer = strpos(p20001_i0, "endometrial") > 0 if previous_gynae_cancer!=1 
+replace previous_gynae_cancer = strpos(p20001_i0, "uterine") > 0 if previous_gynae_cancer!=1 
+
+* Slim down and save * 
+* Keep only ones with a record of interest (i.e. 1 or more of these cancers) * 
+gen any_cancer = previous_breast + previous_lung + previous_thyroid + previous_blood + previous_gynae
+drop if any_cancer==0 
+
+keep eid previous_breast_cancer previous_lung_cancer previous_thyroid_cancer previous_blood_cancer previous_gynae_cancer
+save "UK Biobank\datasets\previous_cancers_self_report.dta", replace
+clear all  
+
+********************************************************************************
+********************************************************************************
+
+
+
+*************************************************
+* 9) Self-reported other conditions at baseline *
+*************************************************
+* Open source dataset * 
+import delimited "UK Biobank\datasets\non_cancercode_selfreported.csv"
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Drop those that did not report any non-cancer illnesses at baseline * 
+drop if p20002_i0=="" 
+
+* Form empty vars for possible baseline comorbidity predictors * 
+gen pcos_baseline = 0 
+gen benign_breast_baseline = 0 
+
+* Input 1 if self-reported at baseline * 
+replace pcos_baseline = strpos(p20002_i0, "polycystic") > 0 
+
+replace benign_breast_baseline = strpos(p20002_i0, "fibrocystic") > 0 
+replace benign_breast_baseline = strpos(p20002_i0, "breast cyst") > 0 if benign_breast_baseline!=1 
+replace benign_breast_baseline = strpos(p20002_i0, "breast fibro") > 0 if benign_breast_baseline!=1 
+replace benign_breast_baseline = strpos(p20002_i0, "benign breast lump") > 0 if benign_breast_baseline!=1 
+
+* Keep only those that are of interest for their medical history at baseline * 
+keep if pcos_b==1 | benign_breast_b==1 
+
+* Slim down and save * 
+keep eid pcos_baseline benign_breast_baseline 
+save "UK Biobank\datasets\non_cancercode_selfreported.dta", replace 
+clear all
+
+********************************************************************************
+********************************************************************************
+
+
+
+*********************
+* 10) HES diagnoses *
+*********************
+
+* Open source dataset *
+import delimited "UK Biobank\datasets\hes_icd10.csv"
+
+gen breastcancer_hes = 0 
+
+* Scan over the second column - where all ICD10 diagnoses are recorded, separated by | * 
+* Label all rows (eid) that have a breast cancer-related ICD10 code ansywhere in p41270 * 
+replace breastcancer_hes = 1 if strpos(p41270, "C50.1")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.2")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.3")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.4")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.5")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.6")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.8")
+replace breastcancer_hes = 1 if strpos(p41270, "C50.9")
+
+* Keep only those rows that have a C50.9 in there * 
+tab breastcancer_hes 
+keep if breastcancer_hes==1
+
+* We have the p41270 variable, which has all the diagnoses ever made sep by | * 
+* Split this column into its constituents - makes a new column/var for each instance * 
+split p41270, p("|")
+
+* No we have, e.g. p41280_a0 for the date the first ICD code was coded, and p412701 for 
+* its corresponding ICD code *
+* The original dates are in strings - need to convert these to YMD dates * 
+
+* split has generated columns ending with numbers 1 upwards, corresponding to date for 
+* first, second, third, etc. dates in the HRS dataset. 
+* However, the corresponding raw date (string) starts at 0. 
+* Plan is to set up a local that incrementally counts up - 
+* In this loop, date_a[0] (matched to p41270[1]) is destringed, a new readable date is 
+* created called date_[1] so that the final numbers match. This increments up each loop iteration. 
+
+* So, start with local called 0, add 1 to it, use that to label the date of the first ICD10, 
+* then 1+1=2, label the second date as _2, etc. * 
+
+local i=0 
+
+forval x = 0(1)70 { 
+	local i = `i'+1
+	gen date_`i' = date(p41280_a`x', "YMD") 
+	format date_`i' %td 
+}
+
+* Error in column number 71 - missing * 
+local i=71
+
+forval x = 72(1)198 { 
+	local i = `i'+1
+	gen date_`i' = date(p41280_a`x', "YMD") 
+	format date_`i' %td 
+}
+
+
+gen breastcancer_hes_date = . 
+
+* Loop over each ICD10 and date pairing, replace the breastcancer_hes_date as the date if it's earlier than 
+* the date currently in that column - want the earliest date a breast cancer is recorded! 
+
+forval x = 1(1)198 {     
+  replace breastcancer_hes_date = date_`x' if strpos(p41270`x', "C50.") & date_`x' <= breastcancer_hes_date
+  }
+
+  format breastcancer_hes_date %td 
+  
+  keep eid breastcancer_hes breastcancer_hes_date 
+
+ save "UK Biobank\datasets\hes_breast_cancers.dta", replace
+ 
+ clear all 
+
+********************************************************************************
+********************************************************************************
+
+
+
+********************
+* 11) GP diagnoses *
+********************
+
+* Initial extraction and pre-processing done in R - see _9_RStudio_gp_clinical_data.R * 
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\gp_clinical_cleaned.csv"
+
+* v1 is from R's write.csv function, don't need it * 
+drop v1 
+gen date = date(event_dt, "YMD")
+format date %td 
+drop event_dt sum_codes 
+drop if date==. 
+
+* Focus on each clinical event, one at a time * 
+
+foreach x in fh_gynae_cancer_gp breast_cancer_gp insitu_cancer_gp benign_breast_gp pcos_gp vasculitis_gp {
+   preserve 
+   keep if `x'==1 
+   sort eid date
+   by eid: gen n = _n 
+   keep if n==1 
+   rename date `x'_date
+   keep eid `x' `x'_date
+   save "UK Biobank\datasets\\`x'.dta", replace 
+   restore	
+}
+
+clear all 
+
+********************************************************************************
+********************************************************************************
+
+
+
+*********************
+* 12) Prescriptions * 
+*********************
+
+*******
+* HRT *
+*******
+
+* This section for HRT follows some R code ran on the UKB RAP - see file * 
+
+* Open source dataset * 
+
+ import delimited "UK Biobank\datasets\hrt_scripts_cleaned.csv"
+
+ tab bnf_code 
+ tab drug_name
+ 
+/*  
+* Oestrogen-only * 
+Adgyn Estro 2mg tablets
+Aerodiol 150micrograms/dose nasal spr
+Bedol 2mg tablets
+Climaval 1mg tablets (Novartis Pharma.. 
+Climaval 2mg tablets (Novartis Pharma..
+Conjugated oestrogens 1.25mg tablets 
+Conjugated oestrogens 2.5mg tablets 
+Conjugated oestrogens 300microgram / .. 
+Conjugated oestrogens 300microgram ta.. 
+Conjugated oestrogens 625microgram / .. 
+Conjugated oestrogens 625microgram ta.. 
+Conjugated oestrogens 625microgram ta..
+Dermestril 50 patches (ProStrakan Ltd)
+EVOREL -100 patch 100mcg/24 hours (6...
+EVOREL -25 patch 25mcg/24 hours (1.6m..
+EVOREL -50 patch 50mcg/24 hours (3.2m..
+EVOREL -75 patch 75micrograms/24 hour..
+Elleste Solo 1mg tablets (Meda Pharma.. 
+Elleste Solo 2mg tablets (Meda Pharma.. 
+Elleste Solo MX 40 transdermal patche.. 
+Elleste Solo MX 80 transdermal patche..
+Estraderm MX 100 patches (Merus Labs .. 
+Estraderm MX 25 patches (Merus Labs L.. 
+Estraderm MX 50 patches (Merus Labs L.. 
+Estraderm MX 75 patches (Merus Labs L.. 
+Estraderm TTS 100 patches (Novartis P.. 
+Estraderm TTS 25 patches (Novartis Ph.. 
+Estraderm TTS 50 patches (Novartis Ph.. 
+Estradiol 0.06% gel (750microgram per.. 
+                Estradiol 100mg implant 
+Estradiol 100mg implant (Organon Labo.. 
+Estradiol 100micrograms/24hours trans.. 
+Estradiol 150micrograms/dose nasal sp..
+              Estradiol 1mg gel sachets 
+                  Estradiol 1mg tablets 
+                 Estradiol 25mg implant
+Estradiol 25micrograms/24hours transd..
+                  Estradiol 2mg tablets 
+Estradiol 37.5micrograms/24hours tran.. 
+Estradiol 40micrograms/24hours transd.. 
+Estradiol 40micrograms/24hours transd.. 
+     Estradiol 500microgram gel sachets 
+                 Estradiol 50mg implant
+Estradiol 50mg implant (Merck Sharp &..
+Estradiol 50micrograms/24hours / Levo.. 
+Estradiol 50micrograms/24hours / Nore..
+Estradiol 50micrograms/24hours transd.. 
+Estradiol 75micrograms/24hours transd.. 
+Estradiol 80micrograms/24hours transd.. 
+Estradiol 80micrograms/24hours transd..
+Estradiol valerate 1mg tablets 
+         Estradiol valerate 2mg tablets 
+Estradot 100micrograms/24hours patche..
+Estradot 25micrograms/24hours patches..
+Estradot 37.5micrograms/24hours patch.. 
+Estradot 50micrograms/24hours patches.. 
+Estradot 75micrograms/24hours patches..
+Estriol 1mg tablets 
+              Estropipate 1.5mg tablets 
+			  Evista 60mg tablets (Daiichi Sankyo U.. 
+ Evorel 100 patches (Janssen-Cilag Ltd) 
+  Evorel 25 patches (Janssen-Cilag Ltd) 
+  Evorel 50 patches (Janssen-Cilag Ltd) 
+  Evorel 75 patches (Janssen-Cilag Ltd) 
+Evorel Pak (Janssen-Cilag Ltd)
+      FemSeven 100 patches (Teva UK Ltd) 
+      FemSeven 50 patches (Teva UK Ltd) 
+      FemSeven 75 patches (Teva UK Ltd)
+	    FemTab 1mg tablets (Merck Serono Ltd) 
+  FemTab 2mg tablets (Merck Serono Ltd) 
+FemTab Continuous tablets (Merck Sero.. 
+Fematrix 40 patches (Abbott Healthcar.. 
+Fematrix 80 patches (Abbott Healthcar.
+	 HORMONIN tablets [SHIRE]
+    Harmogen 1.5mg tablets (Pfizer Ltd) 
+                Hormonin tablets (AMCo)
+				IMPROVERA tablets 
+Menorest 37.5 patches (Novartis Pharm.. 
+Menorest 50 patches (Novartis Pharmac.. 
+Menorest 75 patches (Novartis Pharmac..
+          OESTROGEL gel 0.06% [AVENTIS] 
+Oestrogel Pump-Pack 0.06% gel (Besins.. 
+Ovestin 1mg tablets (Organon Laborato..
+PROGYNOVA TS forte patch 100mcg/24 ho.. 
+PROGYNOVA TS patch 50mcg/24hours (3.8.. 
+    Premarin 0.3mg tablets (Pfizer Ltd) 
+  Premarin 0.625mg tablets (Pfizer Ltd) 
+   Premarin 1.25mg tablets (Pfizer Ltd) 
+Premarin 2.5mg tablets (Wyeth Pharmac..
+      Progynova 1mg tablets (Bayer Plc) 
+      Progynova 2mg tablets (Bayer Plc) 
+Progynova TS 100micrograms/24hours tr.. 
+Progynova TS 50micrograms/24hours tra..
+            SANDRENA gel 0.1% [ORGANON] 
+Sandrena 1mg gel sachets (Orion Pharm.. 
+Sandrena 500microgram gel sachets (Or.. 
+ Zumenon 1mg tablets (BGP Products Ltd) 
+ Zumenon 2mg tablets (BGP Products Ltd) 
+  ethinylestradiol tablets 20micrograms
+  
+ 
+
+* Combined / progestogen * 
+
+ Adgyn Combi tablets 
+ Angeliq tablets (Bayer Plc)
+        CYCLOGEST pessary 200mg [SHIRE] 
+        CYCLOGEST pessary 400mg [SHIRE] 
+    CYCLOGEST suppository 200mg [SHIRE] 
+    CYCLOGEST suppository 400mg [SHIRE] 
+Climagest 1mg tablets (Novartis Pharm.. 
+Climagest 2mg tablets (Novartis Pharm..
+Climanor 5mg tablets (ReSource Medica.. 
+Climesse tablets (Novartis Pharmaceut..
+Clinorette tablets (ReSource Medical .. 
+Crinone 4% progesterone vaginal gel (..
+Crinone 8% progesterone vaginal gel (..
+Cyclo-Progynova 1mg tablets (Meda Pha..
+Cyclo-Progynova 2mg tablets (Meda Pha..
+Cyclogest 200mg pessaries (Actavis UK..
+Cyclogest 400mg pessaries (Actavis UK..
+Duphaston 10mg tablets (Abbott Health..
+Duphaston HRT 10mg tablets (Abbott He..
+Dydrogesterone 10mg tablets
+EVOREL SEQUI patch 50mcg/24 hours (3...
+Elleste Duet 1mg tablets (Meda Pharma.. 
+Elleste Duet 2mg tablets (Meda Pharma.
+Elleste Duet Conti tablets (Meda Phar.. 
+Esmya 5mg tablets (Gedeon Richter (UK..
+Estracombi TTS patches (Novartis Phar..
+Estradiol 1mg / Dydrogesterone 5mg ta.. 
+Estradiol 1mg / Norethisterone acetat..
+Estradiol 2mg / Norethisterone acetat.. 
+Estradiol valerate 1mg / Medroxyproge.. 
+Estradiol valerate 1mg / Medroxyproge..
+Estradiol valerate 2mg / Medroxyproge.. 
+Estradiol valerate 2mg / Norethistero..
+Estrapak 50 (Novartis Pharmaceuticals..
+ Evorel Conti patches (Janssen-Cilag L..
+Evorel Sequi patches (Janssen-Cilag L..  
+   FemSeven Conti patches (Teva UK Ltd) 
+   FemSeven Sequi patches (Teva UK Ltd)
+FemTab Sequi tablets (Merck Serono Ltd)
+Femapak 40 (Abbott Healthcare Product.. 
+Femapak 80 (Abbott Healthcare Product.. 
+Femoston 1/10mg tablets (BGP Products.. 
+Femoston 2/10mg tablets (BGP Products.. 
+Femoston 2/20mg tablets (Abbott Healt.. 
+Femoston-conti 0.5mg/2.5mg tablets (B.. 
+Femoston-conti 1mg/5mg tablets (BGP P..
+GESTONE injection 50mg/ml [NORDIC] 
+Gestone 50mg/1ml solution for injecti..
+Hydroxyprogesterone 250mg/1ml solutio..             
+Indivina 1mg/2.5mg tablets (Orion Pha.. 
+Indivina 1mg/5mg tablets (Orion Pharm.. 
+Indivina 2mg/5mg tablets (Orion Pharm..
+Kliofem tablets (Novo Nordisk Ltd) 
+   Kliovance tablets (Novo Nordisk Ltd)       
+  Medroxyprogesterone 10mg tablets 
+      Medroxyprogesterone 2.5mg tablets 
+        Medroxyprogesterone 5mg tablets  
+ Micronor HRT 1mg tablets (Janssen-Cil.. 
+             Norethisterone 1mg tablets 
+Norethisterone 5mg tablets (A A H Pha.. 
+Norethisterone 5mg tablets (Actavis U.. 
+Norethisterone 5mg tablets (Wockhardt..
+Novofem tablets (Novo Nordisk Ltd) 
+  Nuvelle Continuous tablets (Bayer Plc) 
+Nuvelle TS patches (Schering Health C.. 
+            Nuvelle tablets (Bayer Plc)    
+PREMPAK 0.625 tablets [WYETH PHAR]
+ PRO-GEST cream [IMPORT]          
+ Premique 0.625mg/5mg tablets (Pfizer .. 
+Premique Cycle 0.625mg/10mg tablets (.. 
+Premique Low Dose 0.3mg/1.5mg modifie.. 
+Prempak-C 0.625mg/0.15mg tablets (Pfi.. 
+Prempak-C 1.25mg/0.15mg tablets (Pfiz..     
+Primolut N 5mg tablets (Bayer Plc) 
+Pro-Juven 3% cream (Imported (United .. 
+Progesterone 100mg/2ml solution for i.. 
+           Progesterone 200mg pessaries 
+Progesterone 4% vaginal gel 1.125g ap.. 
+           Progesterone 400mg pessaries 
+Progesterone 8% vaginal gel 1.125g ap.. 
+ Progesterone micronised 100mg capsules 
+ Progesterone micronised 200mg capsules     
+Proluton Depot 250mg/1ml solution for.. 
+  Provera 10mg tablets (Pfizer Ltd) 
+     Provera 2.5mg tablets (Pfizer Ltd) 
+       Provera 5mg tablets (Pfizer Ltd)     
+Tridestra tablets (Orion Pharma (UK) ..              
+Trisequens Forte tablets (Novo Nordis.. 
+  Trisequens tablets (Novo Nordisk Ltd) 
+Ulipristal 5mg tablets 
+Utrogestan 100mg capsules (Besins Hea.. 
+Utrogestan 200mg capsules (Besins Hea.. 
+Utrogestan 200mg vaginal capsules wit..
+drospirenone with estradiol tablets 2.. 
+estradiol and (estradiol with dydroge.. 
+estradiol and (estradiol with dydroge.. 
+estradiol and (estradiol with dydroge.. 
+estradiol and (estradiol with dydroge.. 
+estradiol and (estradiol with levonor.. 
+estradiol and (estradiol with norethi..
+estradiol valerate with levonorgestre..
+estradiol valerate with levonorgestre.. 
+estradiol valerate with medroxyproges.. 
+estradiol with (estradiol + norethist..    
+norethisterone acetate tablets 10mg
+         progesterone injection 50mg/ml 
+         progesterone suppository 200mg 
+         progesterone suppository 400mg 
+norgestrel and conjugated oestrogens ..
+norgestrel and conjugated oestrogens ..
+piperazine oestrone sulfate with medr..      
+*/ 
+
+ * Assume all HRT users had oestrogen-only HRT unless otherwise specified *  
+ gen combined = 0 
+ 
+ * Replace oestrogen_only = 0 if there was a progestogen/combination script * 
+  * EVOREL SEQUI needs own one - use SEQUI in string  * 
+  * Duet in string for Elleste Duet; similar play for Conti combinations * 
+ 
+ foreach x in Adgyn Angeliq CYCLOGEST Climagest Climesse Climesse Clinorette Crinone Cyclo-Progynova /// 
+Cyclogest Duphaston Dydrogesterone SEQUI Duet Conti Esmya Estracombi Norethisterone Medroxyprog Estrapak /// 
+Sequi FemTab Femapak Femoston GESTONE Gestone Hydroxyprogesterone Indivina Kliofem Kliovance Micronor Nuvelle /// 
+PREMPAK PRO-GEST Premique Prempak-C Primolut Pro-Juven Progesterone Proluton Provera Tridestra Trisequens Utrogestan drospirenone norgestrel piperazine {
+ 	
+	 replace combined = 1 if strpos(drug_name, "`x'")
+	
+ }
+ 
+* Now, use recorded combined/progestogens to form an oestrogen_only column * 
+ tab combined 
+ gen oestrogen_only = 0 
+ replace oestrogen_only = 1 if combined!=1 
+ 
+ * Quick tabulation and cross-tabulation to make sure mutually exclusive and collectively exhaustive *
+ tab oestrogen_only 
+ tab combined 
+ tab oestrogen_only combined 
+ 
+ * Keep only salient variables in slimmed-down interim dataset * 
+ * Want to have issue_date in readable format * 
+ gen script_date = date(issue_date, "YMD")
+ format script_date %td 
+ 
+ keep eid script_date combined oestrogen_only 
+
+ * Sort by eid, then date within each ID * 
+ sort eid script_date 
+ save "UK Biobank\datasets\hrt_scripts_cleaned.dta", replace 
+ 
+ * Understand the number of GP prescriptions recorded for each person - generate number of observations for each eid, and summarise/plot * 
+ by eid: gen number_scripts = _N  // already sorted by eid and then script_date 
+ 
+ summ number_scripts, det 
+ histogram number_scripts, percent 
+     
+* Merge in slim file with eid and entry_date - use this to drop any scripts that were issued after cohort entry (prediction point) * 
+merge m:1 eid using "UK Biobank\datasets\start_cohort.dta"
+
+keep if _merge==3 
+drop _merge 
+
+* Now, in each eid, for which there may be several rows (per-prescription data structure), remove the row if the prescription was after start_follow_up date * 
+gen later_hrt = 0 
+
+replace later_hrt = 1 if script_date > start_follow_up
+
+* Remove those rows that had HRT scripts during follow-up * 
+drop if later_hrt==1 
+
+* Generate new variable that denotes ever had at least 1 combined/progestogen. If person only ever had oestrogens, then they will be assumed as oestrogen nly users - if they ever had 1+ progest/combined, designate as combined HRT user * 
+sort eid script_date 
+
+by eid: egen evercombined = sum(combined) 
+
+summ evercombined, det 
+gen oestrogen_only_hrt = 1 if (oestrogen==1 & evercombined==0) 
+
+gen combined_hrt = 1 if evercombined!=0 
+
+* Quick QC * 
+count if oestrogen_only_hrt==1 & combined_hrt==1 
+
+* Generate time between start of follow-up date and last HRT script; scale is years * 
+sort eid script_date 
+by eid: egen startdate = min(script_date) 
+format startdate %td 
+
+by eid: egen lastdate = max(script_date)
+format lastdate %td 
+
+gen hrt_duration = (lastdate - startdate)/365.25 
+summ hrt_duration, det 
+
+gen time_since_last_hrt = (start_follow_up - lastdate)/365.25
+summ time_since_last_hrt, det 
+
+* Categorise HRT users by type and duration and recency of use, as per QResearch model * 
+
+gen recent_oestrogen = 1 if oestrogen_only_hrt==1 & time_since_last_hrt<5 
+replace recent_oestrogen = 1 if recent_oestrogen==1 & hrt_duration<1  
+replace recent_oestrogen = 2 if recent_oestrogen==1 & hrt_duration>=1 & hrt_duration<3  
+replace recent_oestrogen = 3 if recent_oestrogen==1 & hrt_duration>=1 & hrt_duration<5  
+replace recent_oestrogen = 4 if recent_oestrogen==1 & hrt_duration>=1 & hrt_duration<10  
+replace recent_oestrogen = 5 if recent_oestrogen==1 & hrt_duration>=1 & hrt_duration>=10   
+
+
+gen past_oestrogen = 1 if oestrogen_only_hrt==1 & time_since_last_hrt>=5 
+replace past_oestrogen = 1 if past_oestrogen==1 & hrt_duration<1  
+replace past_oestrogen = 2 if past_oestrogen==1 & hrt_duration>=1 & hrt_duration<3  
+replace past_oestrogen = 3 if past_oestrogen==1 & hrt_duration>=1 & hrt_duration<5  
+replace past_oestrogen = 4 if past_oestrogen==1 & hrt_duration>=1 & hrt_duration<10  
+replace past_oestrogen = 5 if past_oestrogen==1 & hrt_duration>=1 & hrt_duration>=10  
+
+
+gen recent_combinedhrt = 1 if combined_hrt==1 & time_since_last_hrt<5 
+replace recent_combinedhrt = 1 if recent_combinedhrt==1 & hrt_duration<1  
+replace recent_combinedhrt = 2 if recent_combinedhrt==1 & hrt_duration>=1 & hrt_duration<3  
+replace recent_combinedhrt = 3 if recent_combinedhrt==1 & hrt_duration>=1 & hrt_duration<5  
+replace recent_combinedhrt = 4 if recent_combinedhrt==1 & hrt_duration>=1 & hrt_duration<10  
+replace recent_combinedhrt = 5 if recent_combinedhrt==1 & hrt_duration>=1 & hrt_duration>=10 
+
+
+gen past_combinedhrt = 1 if combined_hrt==1 & time_since_last_hrt>=5  
+replace past_combinedhrt = 1 if past_combinedhrt==1 & hrt_duration<1  
+replace past_combinedhrt = 2 if past_combinedhrt==1 & hrt_duration>=1 & hrt_duration<3  
+replace past_combinedhrt = 3 if past_combinedhrt==1 & hrt_duration>=1 & hrt_duration<5  
+replace past_combinedhrt = 4 if past_combinedhrt==1 & hrt_duration>=1 & hrt_duration<10  
+replace past_combinedhrt = 5 if past_combinedhrt==1 & hrt_duration>=1 & hrt_duration>=10 
+
+
+keep eid recent_oestrogen past_oestrogen recent_combinedhrt past_combinedhrt 
+duplicates drop eid, force 
+
+tab recent_oest 
+tab recent_combined 
+tab past_oestrogen
+tab past_combined 
+
+* Save final HRT dataset ready for later use * 
+ save "UK Biobank\datasets\hrt_scripts_cleaned.dta", replace 
+
+ clear all 
+ 
+********************************************************************************
+
+********
+* SSRI *
+********
+* Open source dataset * 
+import delimited "UK Biobank\datasets\ssri_scripts_cleaned.csv"
+
+ tab bnf_code 
+ tab drug_name
+
+ * Date of prescription - currently in string form * 
+ gen script_date = date(issue_date, "YMD")
+ format script_date %td  
+ 
+ * Slim down the dataset * 
+ keep eid script_date 
+ sort eid script_date 
+ 
+ * Merge in the start dates so that only scripts before follow-up start are counted * 
+ merge m:1 eid using "UK Biobank\datasets\start_cohort.dta"
+
+keep if _merge==3 
+drop _merge 
+
+* make new variable for having had SSRI prescribed * 
+gen ssri_script = . 
+* equals 1 if script was before follow-up * 
+replace ssri_script = 1 if script_date<start_follow_up
+
+* Remove if script issued during follow-up (after prediction has been made) * 
+drop if ssri_script==.  
+
+* Sort by ID, and then the dates of eligible prescriptions * 
+sort eid script_date 
+by eid: gen number_ssri_scripts = _N 
+
+* Exposed is defined as having had at least 3 scripts for this medication * 
+drop if number_ssri_scripts<3 
+
+* Slim down and save * 
+keep eid ssri_script 
+duplicates drop eid, force 
+
+* Save dataset for later use * 
+ save "UK Biobank\datasets\ssri_scripts_cleaned.dta", replace 
+
+ clear all 
+
+******************************************************************************** 
+
+*******************
+* Anti-psychotics *
+*******************
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\apsych_scripts_cleaned.csv"
+
+ tab bnf_code 
+ tab drug_name
+
+ * Date of prescription - currently in string form * 
+ gen script_date = date(issue_date, "YMD")
+ format script_date %td  
+ 
+ * Slim down the dataset * 
+ keep eid script_date 
+ sort eid script_date 
+ 
+ * Merge in the start dates so that only scripts before follow-up start are counted * 
+ merge m:1 eid using "UK Biobank\datasets\start_cohort.dta"
+
+keep if _merge==3 
+drop _merge 
+
+* make new variable for having had anti-psychotic prescribed * 
+gen antipsych_script = . 
+* equals 1 if script was before follow-up * 
+replace antipsych_script = 1 if script_date<start_follow_up
+
+* Remove if script issued during follow-up (after prediction has been made) * 
+drop if antipsych_script==.  
+
+* Sort by ID, and then the dates of eligible prescriptions * 
+sort eid script_date 
+by eid: gen number_apsych_scripts = _N 
+
+* Exposed is defined as having had at least 3 scripts for this medication * 
+drop if number_apsych_scripts<3 
+
+* Slim down and save * 
+keep eid antipsych_script 
+duplicates drop eid, force 
+
+* Save dataset for later use * 
+ save "UK Biobank\datasets\apsych_scripts_cleaned.dta", replace 
+
+ clear all 
+
+********************************************************************************
+********************************************************************************
+
+
+
+***************************************
+* 13) Family history of breast cancer *
+***************************************
+* Open source dataset * 
+import delimited "UK Biobank\datasets\family_history.csv" 
+
+* Weird format where first column has eid, and some diagnosis information. eid is first, 
+* so let's extract the first numeric piece of this v1 column * 
+moss v1, regex match("([0-9]+\.*[0-9]*|\.[0-9]+)")
+destring _match1, replace force
+rename _match1 eid 
+
+drop _pos1 _match2 _pos2 _match3 _pos3 _match4 _pos4 
+
+* Merge in female ID numbers, so that we can cut down immediately and only deal with 
+* date for women *  
+merge 1:1 eid using "UK Biobank\datasets\female_eids.dta"
+* if _merge==3, the eids have been matched * 
+keep if _merge==3 
+
+* Form empty new variables for relevant FHx predictors * 
+gen fh_breast_cancer = 0 
+
+* Search the strings and insert 1s into these new vars as appropriate * 
+* Loop over all the columns people could have filled in * 
+
+*replace fh_breast_cancer = strpos(v1, "Breast") > 0
+*replace fh_breast_cancer = (strpos(v2, "Breast") > 0) if fh_breast_cancer!=1
+*replace fh_breast_cancer = (strpos(v3, "Breast") > 0) if fh_breast_cancer!=1
+
+foreach x in v1 v2 v3 v4 v5 v6 v7 v8 v9 v10 v11 v12 v13 {
+	replace fh_breast_cancer = (strpos(`x', "Breast") > 0) if fh_breast_cancer!=1 
+}
+
+tab fh_breast_ca 
+
+keep if fh_breast_cancer==1 
+
+keep eid fh_breast_cancer 
+save "UK Biobank\datasets\fh_breast_cancer.dta", replace
+clear all 
+
+********************************************************************************
+******************************************************************************** 
+
+
+********************************************************
+* 14) First occurrences data for non-cancer predictors * 
+********************************************************
+
+* Using UKB linked datasets to identify first dates (where relevant) that several 
+* conditions were diagnosed/recoded in GP/HES/UKB baseline assessment centre * 
+
+* Ischaemic heart disease, psychotic illness, endometriosis * 
+
+* Open source dataset * 
+import delimited "UK Biobank\datasets\first_occurrences.csv"
+
+* Destring dates and rename as we go * 
+gen date_type1dm = date(p130706, "YMD")     // E10, IDDM - Type 1 diabetes proxy 
+gen date_type2dm = date(p130708, "YMD")     // E11, NIDDM - Type 2 diabetes proxy 
+
+gen date_schizophrenia    = date(p130874, "YMD")    // F20 - schizophrenia 
+gen date_schizotypal     = date(p130876, "YMD")    // F21 - schizotypal disorder 
+gen date_delusional      = date(p130878, "YMD")    // F22 - persistent delusional disorder 
+gen date_psychotic        = date(p130880, "YMD")    // F23 - acute and transient psychotic disorders  
+gen date_schizoaffective = date(p130884, "YMD")    // F25 - schizoaffective disorders 
+gen date_nonorganicpsych = date(p130886, "YMD")    // F28 - other non-organic psychotic disorders  
+gen date_manic           = date(p130890, "YMD")    // F30 - manic episode  
+gen date_bipolar         = date(p130892, "YMD")    // F31 - bipolar affective disorder  
+
+gen date_endometriosis = date(p132122, "YMD")      // N80 - endometriosis 
+ 
+gen date_angina         = date(p131296, "YMD") // I20 - angina pectoris  
+gen date_acutemi        = date(p131298, "YMD") // I21 - acute myocardial infarction 
+gen date_subseqmi       = date(p131300, "YMD") // I22 - subsequent myocardial infarction 
+gen date_other_ihd      = date(p131304, "YMD") // I24 - other acute ischaemic heart diseases  
+gen date_chronic_ihd    = date(p131306, "YMD") // I25 - chronic ischaemic heart disease 
+
+
+* Earliest date that type 1 diabetes was diagnosed * 
+gen type1dm = 0 
+replace type1dm = 1 if date_type1dm!=. 
+
+* Type 2 diabetes * 
+gen type2dm = 0 
+replace type2dm = 1 if date_type2dm!=.
+
+* Psychotic condition, and earliest date recorded * 
+gen psychosis = 0 
+replace psychosis = 1 if date_schizophrenia!=. | date_schizotypal!=. | date_delusional!=. | date_psychotic!=. | date_schizoaffective!=. | date_nonorganicpsych!=. | date_manic!=. | date_bipolar!=. 
+gen date_psychosis = .
+replace date_psychosis = min(date_schizophrenia, date_schizotypal, date_delusional, date_psychotic, date_schizoaffective, date_nonorganicpsych, date_manic, date_bipolar) 
+
+* Endometriosis * 
+gen endometriosis = 0 
+replace endometriosis = 1 if date_endometriosis!=. 
+
+* Ischaemic heart disease * 
+gen ihd = 0 
+replace ihd = 1 if date_angina!=. | date_acutemi!=. | date_subseqmi!=. | date_other_ihd!=. | date_chronic_ihd!=. 
+gen date_ihd = . 
+replace date_ihd = min(date_angina, date_acutemi, date_subseqmi, date_other_ihd, date_chronic_ihd)
+
+format date_type1dm %td 
+format date_type2dm %td 
+format date_psychosis %td 
+format date_endometriosis %td 
+format date_ihd %td 
+
+
+* Merge in the start cohort with the start of follow-up date. Use this to assign 0s to 
+* diagnoses that occurred after follow-up started * 
+merge m:1 eid using "UK Biobank\datasets\start_cohort.dta"
+keep if _merge==3 
+
+* Now we have only the women that are in the starting cohort * 
+
+foreach x in type1dm type2dm psychosis endometriosis ihd {
+	replace `x' = 0 if date_`x'>start_follow_up
+	tab `x'
+}
+
+keep eid type1dm type2dm psychosis endometriosis ihd 
+
+* Save after slimming down to salient variables * 
+save "UK Biobank\datasets\first_occurrences.dta", replace
+
+clear all 
+********************************************************************************
+********************************************************************************
+
+
+
+log using "UK Biobank\log\_2_study_cohort_derivation.smcl", replace 
+
+
+**************************************************************************************************
+* Cohort derivation - base cohort with baseline predictors and removing prevalent breast cancers * 
+**************************************************************************************************
+use "UK Biobank\datasets\start_cohort.dta"
+
+*********************************
+* Merge in cancer registry data *
+*********************************
+* ICD-10 *  
+merge 1:1 eid using "UK Biobank\datasets\cancer_registry_icd10.dta"
+drop _merge 
+
+* Predictor variable cancers - set to 0 if diagnosed after follow-upstart date (prediction point) * 
+foreach x in lung thyroid blood gynae {
+	tab `x'_cancer_registry
+	replace `x'_cancer_registry = 0 if `x'_cancer_registry_date>start_follow_up & 	`x'_cancer_registry_date!=. 
+}
+
+tab lung_cancer_registry 
+tab thyroid_cancer_registry 
+tab blood_cancer_registry 
+tab gynae_cancer_registry 
+
+* ICD-9 * 
+merge 1:1 eid using "UK Biobank\datasets\cancer_registry_icd9.dta" 
+drop _merge 
+
+* Predictor variable cancers - set to 0 if diagnosed after follow-upstart date (prediction point) * 
+foreach x in lung thyroid blood gynae {
+	tab `x'_cancer_icd9
+	replace `x'_cancer_icd9 = 0 if `x'_cancer_icd9_date>start_follow_up &	`x'_cancer_icd9_date!=. 
+}
+
+tab lung_cancer_icd9
+tab thyroid_cancer_icd9 
+tab blood_cancer_icd9 
+tab gynae_cancer_icd9 
+
+* Cross-tab ICD-10 codes and ICD-9 codes * 
+tab lung_cancer_registry lung_cancer_icd9
+tab thyroid_cancer_registry thyroid_cancer_icd9 
+tab blood_cancer_registry blood_cancer_icd9 
+tab gynae_cancer_registry gynae_cancer_icd9 
+
+********************************************************************************
+
+*************************
+* Polygenic risk scores * 
+*************************
+merge 1:1 eid using "UK Biobank\datasets\prs.dta" 
+drop _merge 
+
+********************************************************************************
+
+********************************
+* Reproductive history factors * 
+********************************
+merge 1:1 eid using "UK Biobank\datasets\reproductive_factors.dta" 
+drop _merge 
+
+********************************************************************************
+
+***********
+* Smoking *
+***********
+merge 1:1 eid using "UK Biobank\datasets\smoking.dta"
+drop _merge 
+
+********************************************************************************
+
+***********
+* Alcohol *
+***********
+merge 1:1 eid using "UK Biobank\datasets\alcohol.dta" 
+drop _merge 
+
+********************************************************************************
+
+************************************
+* Previous cancers (self-reported) *
+************************************
+merge 1:1 eid using "UK Biobank\datasets\previous_cancers_self_report.dta" 
+drop _merge 
+
+********************************************************************************
+
+*******************************
+* HES breast cancer diagnoses *
+*******************************
+merge 1:1 eid using "UK Biobank\datasets\hes_breast_cancers.dta" 
+drop if _merge==2 // not in core dataset 0- ?subject to earlier exclusion, or male? 
+drop _merge 
+
+********************************************************************************
+
+****************************
+* GP diagnoses of interest * 
+****************************
+
+foreach x in fh_gynae_cancer_gp breast_cancer_gp insitu_cancer_gp benign_breast_gp pcos_gp vasculitis_gp {
+	
+	merge 1:1 eid using "UK Biobank\datasets\\`x'.dta"
+	drop if _merge==2 
+	drop _merge 
+	
+}
+
+********************************************************************************
+
+*****************************************
+* Medication prescriptions in GP record * 
+*****************************************
+
+* HRT, SSRIs and anti-psychotics * 
+
+foreach x in hrt ssri apsych {
+	
+	merge 1:1 eid using "UK Biobank\datasets\\`x'_scripts_cleaned.dta"
+	drop if _merge==2 
+	drop _merge 
+	
+}
+
+********************************************************************************
+
+**************************************************
+* Family history of breast cancer, self-reported *
+**************************************************
+
+merge 1:1 eid using "UK Biobank\datasets\fh_breast_cancer.dta"
+drop _merge
+
+********************************************************************************
+
+***********************************
+* First occurrences - non-cancers * 
+***********************************
+merge 1:1 eid using "UK Biobank\datasets\first_occurrences.dta" 
+drop _merge 
+
+********************************************************************************
+
+***************
+* Deaths data *
+*************** 
+merge 1:1 eid using "UK Biobank\datasets\death_data.dta"
+drop _merge 
+
+********************************************************************************
+
+
+*****************************************************************************
+** Cleaning: any breast cancer (GP, HES, cancer registry, deaths register) **
+*****************************************************************************
+
+gen final_breast_cancer = 0 
+
+* Do step-by-step way to see how many 'cases' we get from each data source * 
+replace final_breast_cancer = 1 if breast_cancer_registry==1 
+replace final_breast_cancer = 1 if breast_cancer_icd9==1 
+replace final_breast_cancer = 1 if breastcancer_hes==1 
+replace final_breast_cancer = 1 if breast_cancer_gp==1
+replace final_breast_cancer = 1 if breast_cancer_death==1
+tab final_breast_cancer 
+
+* Date to accompany this - earliest record of breast cancer * 
+gen final_breast_cancer_date = . 
+replace final_breast_cancer_date = min(breast_cancer_registry_date, breast_cancer_icd9_date, breastcancer_hes_date, breast_cancer_gp_date, date_death) if final_breast_cancer==1 
+format final_breast_cancer_date %td 
+summ final_breast_cancer_date, form det  
+
+* Remove women that had breast cancer diagnosed prior to start date * 
+* Use the 'final' breast cancer variable we just made by traingulating across data sources * 
+count 
+count if final_breast_cancer==1 & (final_breast_cancer_date<start_follow_up) 
+drop if final_breast_cancer==1 & (final_breast_cancer_date<start_follow_up)
+drop if previous_breast_cancer==1 
+count 
+
+drop previous_breast 
+********************************************************************************
+
+*******************************************************
+* Exclusion: breast carcinoma in situ, e.g. DCIS/LCIS * 
+*******************************************************
+
+* Remove women that had breast carcinoma in situ diagnosed prior to study start * 
+gen final_insitu_cancer = 0 
+replace final_insitu_cancer = 1 if insitu_cancer_registry==1  
+replace final_insitu_cancer = 1 if insitu_cancer_icd9==1  
+replace final_insitu_cancer = 1 if insitu_cancer_gp==1 
+tab final_insitu_cancer 
+
+gen final_insitu_cancer_date = . 
+replace final_insitu_cancer_date = min(insitu_cancer_registry_date, insitu_cancer_icd9_date, insitu_cancer_gp_date) if final_insitu_cancer==1 
+format final_insitu_cancer_date %td 
+summ final_insitu_cancer_date, form det 
+
+* Drop those that had DCIS/similar at start of follow-up * 
+count
+count if final_insitu_cancer==1 & (final_insitu_cancer_date<start_follow_up)
+drop if final_insitu_cancer==1 & (final_insitu_cancer_date<start_follow_up)
+count 
+
+drop insitu_cancer_registry insitu_cancer_registry_date insitu_cancer_icd9 insitu_cancer_icd9_date insitu_cancer_gp insitu_cancer_gp_date final_insitu* 
+
+******************************************************************************** 
+
+
+***********************************
+* Consolidate/rationalise columns * 
+***********************************
+
+* HRT variables * 
+* Missings are "." - change to zero * 
+foreach x in recent_oestrogen past_oestrogen recent_combinedhrt past_combinedhrt {
+	replace `x' = 0 if `x'==. 
+}
+
+* SSRI use * 
+* Missings are "." - change to zero *
+replace ssri_script = 0 if ssri_script==.  
+rename ssri_script ssri 
+
+* Anti-psychotic use * 
+* Missings are "." - change to zero * 
+replace antipsych_script = 0 if antipsych_script==. 
+rename antipsych_script antipsych 
+
+* Previous cancers * 
+* From cancer registry (ICD9 or ICD10), or self-report at UK Biobank assessment * 
+gen final_lung_cancer = 0 
+gen final_thyroid_cancer = 0  
+gen final_blood_cancer = 0  
+gen final_gynae_cancer = 0 
+
+replace final_lung_cancer = 1 if previous_lung_cancer==1   // self-report at UKB assessment 
+replace final_lung_cancer = 1 if lung_cancer_registry==1 & lung_cancer_registry_date<start_follow_up // ICD10 cancer registry 
+replace final_lung_cancer = 1 if lung_cancer_icd9==1 & lung_cancer_icd9_date<start_follow_up // ICD9 cancer registry 
+
+replace final_thyroid_cancer = 1 if previous_thyroid_cancer==1   // self-report at UKB assessment 
+replace final_thyroid_cancer = 1 if thyroid_cancer_registry==1 & thyroid_cancer_registry_date<start_follow_up // ICD10 cancer registry 
+replace final_thyroid_cancer = 1 if thyroid_cancer_icd9==1 & thyroid_cancer_icd9_date<start_follow_up // ICD9 cancer registry 
+
+replace final_blood_cancer = 1 if previous_blood_cancer==1   // self-report at UKB assessment 
+replace final_blood_cancer = 1 if blood_cancer_registry==1 & blood_cancer_registry_date<start_follow_up // ICD10 cancer registry 
+replace final_blood_cancer = 1 if blood_cancer_icd9==1 & blood_cancer_icd9_date<start_follow_up // ICD9 cancer registry 
+
+replace final_gynae_cancer = 1 if previous_gynae_cancer==1   // self-report at UKB assessment 
+replace final_gynae_cancer = 1 if gynae_cancer_registry==1 & gynae_cancer_registry_date<start_follow_up // ICD10 cancer registry 
+replace final_gynae_cancer = 1 if gynae_cancer_icd9==1 & gynae_cancer_icd9_date<start_follow_up // ICD9 cancer registry  
+
+tab final_lung_cancer 
+tab final_thyroid_cancer 
+tab final_blood_cancer 
+tab final_gynae_cancer 
+
+drop lung_cancer_registry lung_cancer_registry_date lung_cancer_icd9 lung_cancer_icd9_date previous_lung_cancer
+rename final_lung_cancer lung_cancer 
+
+drop thyroid_cancer_registry thyroid_cancer_registry_date thyroid_cancer_icd9 thyroid_cancer_icd9_date previous_thyroid_cancer
+rename final_thyroid_cancer thyroid_cancer 
+
+drop blood_cancer_registry blood_cancer_registry_date blood_cancer_icd9 blood_cancer_icd9_date previous_blood_cancer
+rename final_blood_cancer blood_cancer 
+
+drop gynae_cancer_registry gynae_cancer_registry_date gynae_cancer_icd9 gynae_cancer_icd9_date previous_gynae_cancer
+renam final_gynae_cancer gynae_cancer 
+
+* Family history of breast cancer * 
+replace fh_breast_cancer = 0 if fh_breast_cancer!=1 
+tab fh_breast_cancer 
+
+* Fist occurrences variables * 
+* Dates relative to start follow-up already defined in derivation * 
+tab type1dm 
+tab type2dm 
+tab endometriosis 
+tab ihd
+tab psychosis 
+
+* Family history of gynae cancer * 
+gen final_fh_gynae_cancer = 0 
+replace final_fh_gynae_cancer = 1 if fh_gynae_cancer_gp==1 & fh_gynae_cancer_gp_date<start_follow_up 
+drop fh_gynae_cancer_gp fh_gynae_cancer_gp_date 
+rename final_fh_gynae_cancer fh_gynae_cancer  
+
+
+* Other comorbidities * 
+replace vasculitis_gp = 0 if vasculitis_gp==1 & vasculitis_gp_date>start_follow_up  
+drop vasculitis_gp_date 
+rename vasculitis_gp vasculitis 
+replace vasculitis = 0 if vasculitis==. 
+
+replace pcos_gp = 0 if pcos_gp==1 & pcos_gp_date>start_follow_up 
+drop pcos_gp_date 
+rename pcos_gp pcos 
+replace pcos = 0 if pcos==. 
+
+replace benign_breast_gp = 0 if benign_breast_gp==1 & benign_breast_gp_date>start_follow_up 
+drop benign_breast_gp_date 
+rename benign_breast_gp benign_breast_disease 
+replace benign_breast_disease = 0 if benign_breast_disease==. 
+
+
+* Prepping for descriptives = put in zeros when needed, rather than . * 
+replace death_type = 0 if death_type==. 
+tab death_type 
+
+replace breast_cancer_registry = 0 if breast_cancer_registry!=1 
+
+rename breastcancer_hes breast_cancer_hes
+replace breast_cancer_hes = 0 if breast_cancer_hes!=1
+
+replace breast_cancer_gp = 0 if breast_cancer_gp!=1 
+
+replace breast_cancer_death = 0 if breast_cancer_death!=1 
+
+replace other_cause_death = 0 if other_cause_death!=1 
+
+* Forming complete case dataset - could use mi set and use _mi tags to count missings, but for flowchart, can show exclusions with each round/variable * 
+
+* Now, there are different predictors in each model, so: 
+* Different sized datasets if per-model basis. For ease of comparisons, same numbers, let's form a single complete case dataset * 
+count if age==. 
+drop if age==. 
+
+count if bmi==. 
+drop if bmi==. 
+
+// Ethnic group is not a predictor, will use for performance heterogeneity assessment. Count how much missingness, but do not drop * 
+count if ethnic_group=="" 
+
+count if age_menarche==. 
+drop if age_menarche==. 
+
+count if number_births==. 
+drop if number_births==. 
+
+count if smoking_status==. 
+drop if smoking_status==. 
+
+count if alcohol_intake==.
+drop if alcohol_intake==.  
+
+
+* Drop if no polygenic risk score data - drop based on standard. The heldout 'enhanced' set is smaller, and may be a sensitivity analysis. Don't let the sensitivity analysis shrink the sample size for the main analysis * 
+count if prs_standard==. 
+drop if prs_standard==. 
+
+count 
+count if prs_enhanced!=. 
+
+* Final study cohort * 
+save "UK Biobank\datasets\study_cohort.dta", replace 
+
+
+clear all 
+
+log close 
+********************************************************************************
+********************************************************************************
+
