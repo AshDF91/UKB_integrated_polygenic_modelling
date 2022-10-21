@@ -1,0 +1,119 @@
+## Ran on UKB RAP platform ##
+
+##################################################################################
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_scripts.csv") 
+
+data <- read.csv("data_gp_scripts.csv")
+
+summary(data)
+
+################################################################################
+
+## Any HRT ##
+
+
+## Two categories - oestrogen-only HRT, and combined HRT ##
+## Find the drug types, then categorise based on duration (need to use start cohort file) ##
+## Plan: get a long file with the scripts for any woman that had some form of HRT.
+## Merge this m:1 with the start data file, drop the 'incident' scripts, categorise duration with that ##
+
+data <- cbind(data, hrt_codes=0)
+
+# Use grepl function to find any instances where bnf_code contains 06.04.01 (BNF chapter)
+# Insert a 1 if the case, leave as is if not (i.e. = 0)
+
+data$hrt_codes <- ifelse(grepl("06.04.01", data$bnf_code), 1, data$hrt_codes)
+
+# Form a data subset of only those rows where hrt_codes = 1 #
+gp_scripts <- subset(data, hrt_codes!=0)
+
+summary(gp_scripts)
+head(gp_scripts)       ## Looks good - picking up oest and progest ##
+
+
+write.csv(gp_scripts, file="hrt_scripts_cleaned.csv")
+
+# in terminal - $dx upload hrt_scripts_cleaned.csv 
+
+#############################################################
+############################################################# 
+
+
+## Selective serotonin reuptake inhibitors ##
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_scripts.csv") 
+
+data <- read.csv("data_gp_scripts.csv")
+
+summary(data)
+
+################################################################################
+
+## Ever had an SSRI-related BNF code recorded on script issues ##
+
+data <- cbind(data, ssri_codes=0)
+
+# Use grepl function to find any instances where bnf_code contains 4.3.3 , 04.03.03... (BNF chapter)
+# Insert a 1 if the case, leave as is if not (i.e. = 0)
+
+data$ssri_codes <- ifelse(grepl("04.03.03", data$bnf_code), 1, data$ssri_codes)
+
+# Form a data subset of only those rows where hrt_codes = 1 #
+ssri_scripts <- subset(data, ssri_codes!=0)
+
+summary(ssri_scripts)
+head(ssri_scripts)      
+
+
+write.csv(ssri_scripts, file="ssri_scripts_cleaned.csv")
+
+# in terminal - $dx upload ssri_scripts_cleaned.csv 
+
+#############################################################
+############################################################# 
+
+
+
+
+## Anti-psyhotic agents ##
+
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_scripts.csv") 
+
+data <- read.csv("data_gp_scripts.csv")
+
+summary(data)
+
+################################################################################
+
+## Ever had an anti-psychotic related BNF code recorded on script issues ##
+
+data <- cbind(data, apsych_codes=0)
+
+# Use grepl function to find any instances where bnf_code contains 4.2; 04.02. ...  or any subgroup therefrom (BNF chapter)
+# Insert a 1 if the case, leave as is if not (i.e. = 0)
+data$apsych_codes <- ifelse(grepl("0.4.02", data$bnf_code), 1, data$apsych_codes)
+data$apsych_codes <- ifelse(grepl("04.02.01", data$bnf_code), 1, data$apsych_codes)
+data$apsych_codes <- ifelse(grepl("04.02.02", data$bnf_code), 1, data$apsych_codes)
+data$apsych_codes <- ifelse(grepl("04.02.03", data$bnf_code), 1, data$apsych_codes)
+
+# Form a data subset of only those rows where hrt_codes = 1 #
+apsych_scripts <- subset(data, apsych_codes!=0)
+
+summary(apsych_scripts)
+head(apsych_scripts)      
+
+
+write.csv(apsych_scripts, file="apsych_scripts_cleaned.csv")
+
+# in terminal - $dx upload apsych_scripts_cleaned.csv 
+
+#############################################################
+############################################################# 
