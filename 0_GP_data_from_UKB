@@ -1,0 +1,478 @@
+## Ran on UKB RAP platform ##
+
+##################################################################################
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_scripts.csv") 
+
+data <- read.csv("data_gp_scripts.csv")
+
+summary(data)
+
+################################################################################
+
+## Any HRT ##
+
+
+## Two categories - oestrogen-only HRT, and combined HRT ##
+## Find the drug types, then categorise based on duration (need to use start cohort file) ##
+## Plan: get a long file with the scripts for any woman that had some form of HRT.
+## Merge this m:1 with the start data file, drop the 'incident' scripts, categorise duration with that ##
+
+data <- cbind(data, hrt_codes=0)
+
+# Use grepl function to find any instances where bnf_code contains 06.04.01 (BNF chapter)
+# Insert a 1 if the case, leave as is if not (i.e. = 0)
+
+data$hrt_codes <- ifelse(grepl("06.04.01", data$bnf_code), 1, data$hrt_codes)
+
+# Form a data subset of only those rows where hrt_codes = 1 #
+gp_scripts <- subset(data, hrt_codes!=0)
+
+summary(gp_scripts)
+head(gp_scripts)       ## Looks good - picking up oest and progest ##
+
+
+write.csv(gp_scripts, file="hrt_scripts_cleaned.csv")
+
+# in terminal - $dx upload hrt_scripts_cleaned.csv 
+
+#############################################################
+############################################################# 
+
+
+## Selective serotonin reuptake inhibitors ##
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_scripts.csv") 
+
+data <- read.csv("data_gp_scripts.csv")
+
+summary(data)
+
+################################################################################
+
+## Ever had an SSRI-related BNF code recorded on script issues ##
+
+data <- cbind(data, ssri_codes=0)
+
+# Use grepl function to find any instances where bnf_code contains 4.3.3 , 04.03.03... (BNF chapter)
+# Insert a 1 if the case, leave as is if not (i.e. = 0)
+
+data$ssri_codes <- ifelse(grepl("04.03.03", data$bnf_code), 1, data$ssri_codes)
+
+# Form a data subset of only those rows where hrt_codes = 1 #
+ssri_scripts <- subset(data, ssri_codes!=0)
+
+summary(ssri_scripts)
+head(ssri_scripts)      
+
+
+write.csv(ssri_scripts, file="ssri_scripts_cleaned.csv")
+
+# in terminal - $dx upload ssri_scripts_cleaned.csv 
+
+#############################################################
+############################################################# 
+
+
+
+
+## Anti-psyhotic agents ##
+
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_scripts.csv") 
+
+data <- read.csv("data_gp_scripts.csv")
+
+summary(data)
+
+################################################################################
+
+## Ever had an anti-psychotic related BNF code recorded on script issues ##
+
+data <- cbind(data, apsych_codes=0)
+
+# Use grepl function to find any instances where bnf_code contains 4.2; 04.02. ...  or any subgroup therefrom (BNF chapter)
+# Insert a 1 if the case, leave as is if not (i.e. = 0)
+data$apsych_codes <- ifelse(grepl("0.4.02", data$bnf_code), 1, data$apsych_codes)
+data$apsych_codes <- ifelse(grepl("04.02.01", data$bnf_code), 1, data$apsych_codes)
+data$apsych_codes <- ifelse(grepl("04.02.02", data$bnf_code), 1, data$apsych_codes)
+data$apsych_codes <- ifelse(grepl("04.02.03", data$bnf_code), 1, data$apsych_codes)
+
+# Form a data subset of only those rows where hrt_codes = 1 #
+apsych_scripts <- subset(data, apsych_codes!=0)
+
+summary(apsych_scripts)
+head(apsych_scripts)      
+
+
+write.csv(apsych_scripts, file="apsych_scripts_cleaned.csv")
+
+# in terminal - $dx upload apsych_scripts_cleaned.csv 
+
+#############################################################
+############################################################# 
+
+
+
+system("dx ls /datasets")
+
+system("dx download /datasets/data_gp_clinical2.csv") 
+
+data <- read.csv("data_gp_clinical2.csv")
+
+summary(data)
+
+## Family history of gynaecological cancers ##
+data <- cbind(data, fh_gynae_cancer_gp=0)
+
+# Use concpet IDs, then Term IDs... ##
+data$fh_gynae_cancer_gp <- ifelse(data$read_3==".1245", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="1245.", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3==".124c", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3==".124C", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3==".124E", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="124E.", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="YE0cd", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="Ya0Ul", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="YMKRO", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="YaThc", 1, data$fh_gynae_cancer_gp)
+data$fh_gynae_cancer_gp <- ifelse(data$read_3=="Ya00e", 1, data$fh_gynae_cancer_gp)
+
+
+## Breast cancer diagnosis on Read codes ##
+data <- cbind(data, breast_cancer_gp=0)
+
+data$breast_cancer_gp <- ifelse(data$read_3=="X78WM", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Byu6.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X78WT", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6m", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa9A8", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7HCp", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XaFru", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Yah2c", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1D.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1D1", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1D2", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1D3", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1D4", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1D5", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3==".B1Dz", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="BB94.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="BB9K.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="BB9K0", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X77ny", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X78WN", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X78WO", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa0bt", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa0bU", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3ek", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eL", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eM", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eN", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eO", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eP", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eQ", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1z7", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zB", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zD", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zF", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zL", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34..", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B340.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B3401", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B340z", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B341.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B342.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B343.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B344.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B345.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B346.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B347.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34y.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34y0", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34yz", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34z.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B350z", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B35z.", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6f", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya1JX", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6d", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMGyG", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMKoN", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya1hu", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YE1TC", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63j", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMJ6i", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMJOv", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMJ6j", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMJ6k", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMJ6l", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7H4E", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7H4F", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMlbR", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMIbS", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7H4f", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMIbg", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7H4g", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMB06", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMJyb", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="BBK90", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X77ny", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7H4g", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6e", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6g", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X78WO", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="X78WP", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6h", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa0bT", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya1sB", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa0bU", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya1sC", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eK", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63j", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eL", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63k", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eM", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63l", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eN", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63m", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eO", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63o", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Xa3eQ", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Ya63p", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1z7", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7J6k", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1z7", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1z9", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zB", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zD", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="XE1zF", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhZ", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhK", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhL", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhM", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B340z", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhN", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhO", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhP", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhQ", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhR", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhS", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhT", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="YMAok", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhU", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34y0", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhV", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="B34yz", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhW", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhX", 1, data$breast_cancer_gp)
+data$breast_cancer_gp <- ifelse(data$read_3=="Y7JhC", 1, data$breast_cancer_gp)
+   
+    
+## Carcinoma in situ fo the breast ##  
+data <- cbind(data, insitu_cancer_gp=0)
+
+data$insitu_cancer_gp <- ifelse(data$read_3=="Y7J6p", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="YMLQJ", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="Y7J6p", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="Y7J6r", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="B8301", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="Y7J6s", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="ByuFG", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="YMA9p", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="YMGzO", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3==".B311", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="B830.", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="B8300", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="B8301", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="X78WV", 1, data$insitu_cancer_gp)
+data$insitu_cancer_gp <- ifelse(data$read_3=="X78WW", 1, data$insitu_cancer_gp)
+
+
+## Benign breast disease ##
+
+data <- cbind(data, benign_breast_gp=0)
+
+data$benign_breast_gp <- ifelse(data$read_3=="B77..", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="B770.", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="B77z.", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3==".J413", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="K302.", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="K3020", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="K3021", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="K3022", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="K302z", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="XE2al", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3==".J412", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="K301.", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="XE2QN", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="X40Fp", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="X40G3", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="X40FN", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="XE2QN", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="XE20j", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FC", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YE1yW", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YMH6N", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YMLTZ", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FG", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FF", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FE", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FD", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YM3hC", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="XC0cx", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FI", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YE1uU", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YMKub", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Ya0Up", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y41FH", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YMH6K", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YMKua", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y7KIe", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YE1SI", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y7KIn", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y7KIp", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YaYBr", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="Y7J6t", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="XE2Rd", 1, data$benign_breast_gp)
+data$benign_breast_gp <- ifelse(data$read_3=="YMH6L", 1, data$benign_breast_gp)
+        
+       
+## Polycystic ovarian syndrome ##
+
+data <- cbind(data, pcos_gp=0)
+
+data$pcos_gp <- ifelse(data$read_3==".C348", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="C165.", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="X406n", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="Y40TU", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="Y40TW", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="Y40TX", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="Y40TZ", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="YSO1Y", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="YadTR", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="YamLx", 1, data$pcos_gp)
+data$pcos_gp <- ifelse(data$read_3=="X406n", 1, data$pcos_gp)
+
+
+## Vasculitis ##
+
+data <- cbind(data, vasculitis_gp=0)
+
+data$vasculitis_gp <- ifelse(data$read_3==".G886", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3==".L313", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="C3321", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="D3100", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="F421E", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G750.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G758.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G76B.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="M152.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="M2y02", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="M2y0X", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="Myu7A", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="Myu7G", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X00dO", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X00Dw", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X00Dz", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X205D", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X205F", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X309p", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X50Ad", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X50BC", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X50BG", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X50BI", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X50BK", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705b", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705i", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705R", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705S", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705t", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705u", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705v", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705w", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705x", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X7061", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X70Hr", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="XaXlI", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="XE0VV", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="XE0XM", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3==".G882", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3==".G8Z.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G42y0", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G674.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G752.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G755.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G7750", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G7551", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G7752", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G775z", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G757.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="G766.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="Gyu68", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="Gyu69", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="N200.", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="Nyu41", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X00Dw", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X00Dy", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X2056", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705m", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705R", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="X705S", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="XaaF6", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="XE0XM", 1, data$vasculitis_gp)
+data$vasculitis_gp <- ifelse(data$read_3=="XE2QH", 1, data$vasculitis_gp)
+
+
+
+## Make all these 0/1 columns numeric ##
+
+data$fh_gynae_cancer_gp <- as.numeric(data$fh_gynae_cancer_gp) 
+data$breast_cancer_gp   <- as.numeric(data$breast_cancer_gp) 
+data$insitu_cancer_gp   <- as.numeric(data$insitu_cancer_gp)
+data$benign_breast_gp   <- as.numeric(data$benign_breast_gp) 
+data$pcos_gp            <- as.numeric(data$pcos_gp)
+data$vasculitis_gp      <- as.numeric(data$vasculitis_gp)  
+
+summary(data$fh_gynae_cancer_gp)
+summary(data$breast_cancer_gp) 
+summary(data$insitu_cancer_gp)
+summary(data$benign_breast_gp) 
+summary(data$pcos_gp) 
+summary(data$vasculitis_gp)
+
+## Form new column = make it 1 if they have any of these above codes of interest 
+# recorded - we will want to shrink down the dataset and keep only those codes with 
+# their dates for further analysis. 
+
+data <- cbind(data, sum_codes=0)
+
+data$sum_codes <- as.numeric(data$sum_codes)
+
+data$sum_codes <- data$fh_gynae_cancer_gp + data$breast_cancer_gp + data$insitu_cancer_gp + data$benign_breast_gp + data$pcos_gp + data$vasculitis_gp 
+
+summary(data$sum_codes) 
+
+#gp_clinical_slim <- data[!(data$sum_codes!=0), ]
+
+gp_clinical <- subset(data, sum_codes!=0)
+
+View(data) 
+gp_clinical <- subset(data, sum_codes!=0)
+ View(gp_clinical) 
+ 
+View(gp_clinical)
+write.csv(gp_clinical, file="gp_clinical_cleaned.csv")
+
+# in terminal - $dx upload gp_clinical_cleaned.csv 
+
+################################################################################
+###############################################################################
+
+
