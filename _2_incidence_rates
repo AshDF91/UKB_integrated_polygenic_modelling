@@ -1,0 +1,120 @@
+
+
+log using "UK Biobank\log\_3_incidence_rates.smcl", replace 
+
+
+use "UK Biobank\datasets\study_cohort.dta", clear 
+
+* Incidence rates - for both endpoints, and also by groups of data soures for incident diagnoses *
+ 
+***************************
+* Breast cancer incidence *
+*************************** 
+
+summ start_follow_up, form det
+
+* Censoring dates - 
+* deaths = 30 Sept 2021 E&W, 31 Oct 2021 Scot 
+* HES = 30 Sept 2021, 31 July 2021 Scot Morb Records, 28 Feb 2018 Wales 
+* GP data = 31 May 2016/17 England TPP & Vision; 31 March 2017 Scotland Vision/EMIS, 31 Aug 2017 Wales Vision/EMIS 
+* Cancer Registry = 29 Feb 2020, Scot 31 Jan 2021
+
+* Use 30 Sep 2021 as the cut-off date * 
+
+* Assign the censor date * 
+gen censor_date = mdy(09,30,2021) 
+format censor_date %td
+
+************************
+* Cancer registry only *
+************************ 
+* Start follow-up from cohort entry, until event of interest (as recorded in Cancer Registry), date lost to follow up by UKB, 
+* reached censor date alive, or died *  
+
+gen end_registry = min(breast_cancer_registry_date, date_lost_follow_up, censor_date, date_death) 
+format end_registry %td 
+ 
+stset end_registry, origin(start_follow_up) fail(breast_cancer_registry==1) scale(365.25) id(eid)  
+stptime, per(10000)
+
+*************************
+* Cancer registry + HES *
+*************************
+* Start from cohort start, until event (as recorded in Cancer Registry or HES database), date lost to follow-up by UKB, 
+* reached censor date alive, or died * 
+gen end_registry_hes = min(breast_cancer_registry_date, breastcancer_hes_date, date_lost_follow_up, censor_date, date_death)  
+
+gen event_registry_hes = 0 
+replace event_registry_hes = 1 if breast_cancer_hes==1 | breast_cancer_registry==1 
+
+stset end_registry_hes, origin(start_follow_up) fail(event_registry_hes==1) scale(365.25) id(eid) 
+stptime, per(10000)
+
+******************************
+* Cancer registry + HES + GP * 
+******************************
+* Start from cohort start, until event (as recorded in Cancer Registry, HES database or GP records), date lost to follow-up by UKB, 
+* reached censor date alive, or died * 
+gen end_registry_hes_gp = min(breast_cancer_registry_date, breastcancer_hes_date, breast_cancer_gp_date, date_lost_follow_up, censor_date, date_death)  
+
+gen event_registry_hes_gp = 0 
+replace event_registry_hes_gp = 1 if breast_cancer_hes==1 | breast_cancer_registry==1 | breast_cancer_gp==1 
+
+stset end_registry_hes_gp, origin(start_follow_up) fail(event_registry_hes_gp==1) scale(365.25) id(eid) 
+stptime, per(10000)
+
+
+***********************************************
+* Cancer registry + HES + GP + Death register * 
+***********************************************
+* Start from cohort start, until event (as recorded in Cancer Registry, HES database, GP records, or on death cert), date lost to follow-up by UKB, 
+* reached censor date alive, or died * 
+gen end_all = min(final_breast_cancer_date, censor_date, date_death, date_lost_follow_up)
+
+stset end_all, origin(start_follow_up) fail(final_breast_cancer==1) scale(365.25) id(eid) 
+stptime, per(10000)
+stptime, by(centre) per(10000)
+
+********************************************************************************
+
+** Age group-specific incidence rates - to compare against QRes and CRUK national data ** 
+gen dob = start_follow_up - (age*365)
+format dob %td
+
+stset end_all, origin(dob) enter(start_follow_up) fail(final_breast_cancer==1) scale(365.25) id(eid)
+stptime, per(10000) at(40(5)85)
+
+
+********************************************************************************
+
+*****************************
+** Breast cancer mortality **
+*****************************
+drop end_registry end_registry_hes event_registry_hes end_registry_hes_gp event_registry_hes_gp end_all 
+
+gen end_mortality = min(date_death, censor_date, date_lost_follow_up)
+
+stset end_mortality, origin(start_follow_up) fail(breast_cancer_death==1) scale(365.25) id(eid) 
+
+* Overall crude mortality rate * 
+stptime, per(10000)
+
+* Mortality rates per Assessment Centre * 
+stptime, by(centre) per(10000)
+
+* Mortality rates by age band * 
+stset end_mortality, origin(dob) enter(start_follow_up) fail(breast_cancer_death==1) scale(365.25) id(eid) 
+stptime, per(10000) at(40(5)85)
+
+
+
+********************************************************************************
+********************************************************************************
+
+clear all
+
+********************************************************************************
+********************************************************************************
+
+log close 
+
