@@ -1,0 +1,1456 @@
+********************************************************************************
+* Project: UKB_87818
+* Title: 5_cox_models
+* Inputs: cohort_breast_cancer_mortality 
+* Outputs: Final models, cross-validation results
+* Author: Ash Darnell-Fish 
+* Date: 15th Oct 2022, v1 
+********************************************************************************
+
+log using "UK Biobank\log\_5_a_external_validation_cox_model.smcl", replace 
+
+*********************************************************
+* 1) External validation: predicted risks and data prep * 
+*********************************************************
+
+** Open cleaned dataset ** 
+use "UK Biobank\datasets\study_cohort.dta", clear 
+count 
+
+* Stset - outcome is incident breast cancer diagnosis * 
+gen censor_date = mdy(09,30,2021) 
+format censor_date %td
+gen end_fu = min(final_breast_cancer_date, date_death, censor_date, date_lost_follow_up) 
+stset end_fu, origin(start_follow_up) fail(final_breast_cancer==1) scale(365.25) id(eid)
+
+** Calculate linear predictors based on QRes phenotypic model ** 
+* Step-by-step prcess: calculate part of Xb for each predictor, then sum *
+
+gen age_fp1 = ((age/10)^-2)-0.055476233
+gen age_fp2 = ((age/10)^3)-76.53138187
+gen xb_age1 = age_fp1*-21.175859
+gen xb_age2 = age_fp2*0.00156124
+
+gen bmi_fp1 = ((bmi/10)^-2) - 0.15531752
+gen bmi_fp2 = ((bmi/10)^-2) * ln((bmi/10)) - 0.1446226461
+gen xb_bmi1 = bmi_fp1*0.92508765
+gen xb_bmi2 = bmi_fp2*0.01100764
+
+gen xb_fibrocystic = 0.4859072*benign_breast
+gen xb_endometriosis = 0.24687212*endometriosis
+gen xb_pcos = 0.36813439*pcos 
+gen xb_hysterectomy = 0.36714481*hysterectomy
+gen xb_previous_gynae = 0.27289132*gynae_cancer 
+gen xb_ocp = 0.45064521*ocp  
+
+gen xb_recentoest = 0 
+replace xb_recentoest = -0.34739766 if recent_oestrogen==1
+replace xb_recentoest = -0.70404912 if recent_oestrogen==2
+replace xb_recentoest = -0.53939226 if recent_oestrogen==3
+replace xb_recentoest = -0.4444074 if recent_oestrogen==4
+replace xb_recentoest = 0.47773697 if recent_oestrogen==5
+
+gen xb_pastoest = 0 
+replace xb_pastoest = 0.23395249 if past_oestrogen==1
+replace xb_pastoest = 0.29604515 if past_oestrogen==2
+replace xb_pastoest = 0.42898416 if past_oestrogen==3
+replace xb_pastoest = 0.56291697 if past_oestrogen==4
+replace xb_pastoest = 0.59439672 if past_oestrogen==5
+
+gen xb_recentcomb = 0 
+replace xb_recentcomb = -0.36743462 if recent_combined==1 
+replace xb_recentcomb = -0.40968971 if recent_combined==2
+replace xb_recentcomb = -0.33402261 if recent_combined==3
+replace xb_recentcomb = -0.1980899  if recent_combined==4
+replace xb_recentcomb = 0.90091382  if recent_combined==5 
+
+gen xb_pastcomb = 0 
+replace xb_pastcomb = 0.22170673 if past_combined==1 
+replace xb_pastcomb = 0.4983948 if past_combined==2
+replace xb_pastcomb = 0.51872159 if past_combined==3
+replace xb_pastcomb = 0.81466137  if past_combined==4
+replace xb_pastcomb = 0.72812412 if past_combined==5 
+
+gen xb_fhbreast  = 0.80668864*fh_breast 
+gen xb_fhgynaeca = 0.38646923*fh_gynae
+gen xb_prevlung = 0.94964038*lung_cancer
+gen xb_prevblood = 0.50046253*blood_cancer
+gen xb_prevthyroid = 0.69174103*thyroid_cancer 
+
+gen xb_alcohol = 0 
+replace xb_alcohol = 0.3830531 if alcohol==1
+replace xb_alcohol = 0.13190495 if alcohol==2 
+replace xb_alcohol = 0.22547258 if alcohol==3
+replace xb_alcohol = 0.46515505 if alcohol==4
+replace xb_alcohol = 0.27743907 if alcohol==5
+
+gen xb_t1dm = 0.43706883*type1dm
+gen xb_t2dm = 0.23189674*type2dm 
+gen xb_vasc = -0.18722647*vasculitis
+gen xb_psychosis = 0.34441959*psychosis  
+gen xb_antipsych = 0.15437875*antipsych 
+
+gen xb_inter = (age_fp2*fh_breast)*-0.00125287  
+
+gen linear_predictor = xb_age1 + xb_age2 + xb_bmi1 + xb_bmi2 + xb_recentoest + xb_recentcomb + xb_pastcomb ///
++ xb_pastoest + xb_fhbreast + xb_fhgynaeca + xb_prevlung + xb_prevblood + xb_prevthyroid + xb_alcohol + xb_t1dm  ///
++ xb_t2dm + xb_vasc + xb_psychosis + xb_antipsych + xb_inter
+
+** Baseline survival function from QRes phenotypic model ** 
+gen base_surv = 0.9920542 
+
+gen predicted_probability = 1 - base_surv^exp(linear_predictor)
+summ predicted_probability, det 
+histogram predicted_probability, percent bin(100)
+graph save "Graph" "UK Biobank\results\Histogram_predicted_risks_EP1_phenotypicmodel.gph", replace 
+
+
+* Keep salient variables and slim down for R *
+rename _t follow_up 
+
+keep eid linear_predictor prs_standard age_menarche number_births follow_up final_breast_cancer linear_predictor predicted_prob centre ethnic_group 
+
+* Save for modelling in R * 
+save "UK Biobank\datasets\cohort_cox.dta", replace
+clear all
+
+********************************************************************************
+********************************************************************************
+
+
+**************************************************
+* 2) External validation: performance evaluation * 
+**************************************************
+
+* Open slimmed cohort * 
+use "UK Biobank\datasets\cohort_cox.dta", clear 
+
+* Stset the data - 10 year risk horizon * 
+stset follow_up, fail(final_breast==1) exit(t 10)
+* Calculate pseudo-observations for KM failure function at 10 years * 
+* For smoothed calibration plots * 
+stpsurv, f at(10)
+
+** Overall cohort metrics - 'standard' evaluation ** 
+* Calibration slope * 
+gen cloglog_pred = cloglog(predicted_probability) 
+glm pseudo cloglog_pred, irls noconstant link(cloglog)
+
+* Calibration-in-the-large * 
+glm pseudo cloglog_pred, irls noconstant offset(predicted_probability) link(cloglog)
+
+* Calibration plot *
+running pseudo predicted_prob, ci nopts leg(off)  
+
+* Harrell's C - weighted by inverse probability of censoring *                     
+gen invprob = 1/predicted_prob  
+gen censind = 1-_d if _st==1 
+somersd _t invprob if _st==1, cenind(censind) tdist transf(c)
+********************************************************************************
+
+***************************
+* Decision curve analysis * 
+***************************
+stdca predicted_prob, prob(yes) xstart(0.001) xby(0.001) xstop(0.05) timepoint(10)
+graph save "Graph" "UK Biobank\results\DCA_validation_EP1_not_recalibrated.gph", replace  
+
+stdca linear_predictor, prob(no) xstart(0.001) xby(0.001) xstop(0.05) timepoint(10)
+graph save "Graph" "UK Biobank\results\DCA_validation_EP1_recalibrated.gph", replace  
+
+
+********************************************************************************
+
+****************************************************************************************
+** Meta-analytic validation - calculate in centres and pool with random effects model **
+**************************************************************************************** 
+
+* Some centres have small numbers and no deaths - pool geographically close ones, e.g. 
+* Stockport and Macnhester, or Welsh towns/cities * 
+gen iecv_centre = 1                                     // Barts  
+replace iecv_centre = 2 if centre=="Birmingham"   
+replace iecv_centre = 3 if centre=="Bristol"      
+replace iecv_centre = 4 if centre=="Bury"         
+replace iecv_centre = 5 if centre=="Cardiff" | centre=="Swansea" | centre=="Wrexham" // WALES
+replace iecv_centre = 6 if centre=="Croydon"        
+replace iecv_centre = 7 if centre=="Edinburgh"       
+replace iecv_centre = 8 if centre=="Glasgow"        
+replace iecv_centre = 9 if centre=="Hounslow"       
+replace iecv_centre = 10 if centre=="Leeds"         
+replace iecv_centre = 11 if centre=="Liverpool"      
+replace iecv_centre = 12 if centre=="Manchester" | centre=="Stockport"  
+replace iecv_centre = 13 if centre=="Middlesborough"      
+replace iecv_centre = 14 if centre=="Newcastle"     
+replace iecv_centre = 15 if centre=="Nottingham"  
+replace iecv_centre = 16 if centre=="Oxford"         
+replace iecv_centre = 17 if centre=="Reading"        
+replace iecv_centre = 18 if centre=="Sheffield"     
+replace iecv_centre = 19 if centre=="Stoke"          
+
+tab iecv_centre _d
+
+*********************
+* Calibration slope * 
+*********************
+
+cd "UK Biobank/estimates/"
+
+capture postutil clear    
+tempname slope_validation_phenotypiccox 
+postfile `slope_validation_phenotypiccox' slope slope_se val_size using slope_validation_phenotypiccox.dta , replace  
+   
+  forval x = 1(1)19 { 
+  glm pseudo cloglog_pred if iecv_centre==`x', irls noconstant link(cloglog)
+  local slope = r(table)[1,1] 
+  local slope_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `slope_validation_phenotypiccox' (`slope') (`slope_se') (`val_size') 
+  } 
+
+  postclose `slope_validation_phenotypiccox'  
+
+  
+****************************
+* Calibration-in-the-large * 
+****************************
+
+capture postutil clear    
+tempname citl_validation_phenotypiccox 
+postfile `citl_validation_phenotypiccox' citl citl_se val_size using citl_validation_phenotypiccox.dta , replace  
+   
+  forval x = 1(1)19 { 
+  glm pseudo cloglog_pred if iecv_centre==`x', irls noconstant link(cloglog) offset(cloglog_pred)
+  local citl = r(table)[1,1] 
+  local citl_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `citl_validation_phenotypiccox' (`citl') (`citl_se') (`val_size') 
+  } 
+
+  postclose `citl_validation_phenotypiccox'  
+
+  
+***************
+* Harrell's C *
+***************
+
+capture postutil clear    
+tempname C_validation_phenotypiccox
+postfile `C_validation_phenotypiccox' beta st_err val_size using C_validation_phenotypiccox.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  somersd _t invprob if (_st==1 & iecv_centre==`x'), cenind(censind) tdist transf(c)  
+  local C = r(table)[1,1] 
+  local st_err = r(table)[2,1] 
+  local val_size = e(N) 
+  post `C_validation_phenotypiccox' (`C') (`st_err') (`val_size') 
+  } 
+
+  postclose `C_validation_phenotypiccox' 
+
+  save "UK Biobank\datasets\cohort_cox.dta", replace 
+  
+  clear 
+
+******************************************************************************** 
+
+** Performance metric estimation using random effects meta-analysis ** 
+
+use "slope_validation_phenotypiccox.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)" 
+//end 
+meta set slope slope_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_validation_slope.gph", replace  
+clear  
+ 
+use "citl_validation_phenotypiccox.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)" 
+//end 
+meta set citl citl_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig 
+graph save "Graph" "UK Biobank\results\EP1_validation_citl.gph", replace  
+clear 
+
+use "C_validation_phenotypiccox.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)" 
+//end 
+meta set beta st_err, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig 
+graph save "Graph" "UK Biobank\results\EP1_validation_C.gph", replace  
+clear  
+  
+
+********************************************************************************
+********************************************************************************
+********************************************************************************
+log close 
+
+
+
+
+
+
+log using "UK Biobank\log\_5_b_integrated_modelling_cox.smcl", replace 
+
+****************************
+* 2) Integrated modelling  * 
+****************************
+
+** Open starting dataset ** 
+use "UK Biobank\datasets\cohort_cox.dta", clear 
+
+* Find functional polynomial terms for the predictors * 
+stset follow_up, fail(final_breast_cancer==1) exit(t 10)
+mfp: stcox linear_predictor prs_standard age_menarche number_births
+
+* Plot these functional forms * 
+stcox linear_predictor
+predict hr_lin, hr 
+graph twoway fpfitci hr_lin linear_predictor, graphregion(color(white)) 
+graph save "Graph" "UK Biobank\results\EP1_integrated_fp_linearpredictor.gph", replace 
+
+stcox Iprs* 
+predict hr_prs, hr 
+graph twoway fpfitci hr_prs prs_standard, graphregion(color(white)) 
+graph save "Graph" "UK Biobank\results\EP1_integrated_fp_prs.gph", replace
+
+stcox Iage* 
+predict hr_menarche, hr 
+graph twoway fpfitci hr_menarche age_menarche, graphregion(color(white)) 
+graph save "Graph" "UK Biobank\results\EP1_integrated_fp_agemenarche.gph", replace
+
+stcox Inum* 
+predict hr_births, hr 
+graph twoway fpfitci hr_births number_births, graphregion(color(white)) 
+graph save "Graph" "UK Biobank\results\EP1_integrated_fp_numberbirths.gph", replace
+
+drop hr_lin hr_prs hr_menarche hr_births 
+
+********************************************************************************
+
+
+***********************
+* Models to be fitted * 
+***********************
+* Model 1: Phenotypic model output only * 
+* Model 2: Phenotypic + polygenic risk score * 
+* Model 3: Phenotypic + polygenic risk score + reproductive factors * 
+* Model 4: Polygenic risk score only (proxy trait) * 
+
+*************************************************
+* Model 1 and apparent performance - PHENOTYPIC *
+*************************************************
+stcox Ilin*, vce(cluster iecv_centre) nohr 
+
+* Apparent validation of this model (slope = 1, citl=0 by definition) * 
+* Harrell's C * 
+predict xb_apparent, xb
+gen hr_apparent = exp(xb)
+gen invhr_apparent = 1/hr_apparent 
+somersd _t invhr_apparent if _st==1, cenind(censind) tdist transf(c) 
+
+drop xb_apparent hr_apparent invhr_apparent 
+
+********************************************************************************
+
+***********************************************************
+* Model 2 and apparent performance - PHENOTYPIC PLUS PRS  *
+***********************************************************
+stcox c.Ilin##c.Iprs* , vce(cluster iecv_centre) nohr 
+
+* Apparent validation of this model (slope = 1, citl=0 by definition) * 
+* Harrell's C * 
+predict xb_apparent, xb
+gen hr_apparent = exp(xb)
+gen invhr_apparent = 1/hr_apparent 
+somersd _t invhr_apparent if _st==1, cenind(censind) tdist transf(c) 
+
+drop xb_apparent hr_apparent invhr_apparent 
+
+********************************************************************************
+
+****************************************************************************
+* Model 3 and apparent performance - PHENOTYPIC PLUS PRS PLUS REPRODUCTIVE *
+****************************************************************************
+stcox c.Ilin##c.Iprs* Iage* Inum*, vce(cluster iecv_centre) nohr 
+
+* Apparent validation of this model (slope = 1, citl=0 by definition) * 
+* Harrell's C * 
+predict xb_apparent, xb
+gen hr_apparent = exp(xb)
+gen invhr_apparent = 1/hr_apparent 
+somersd _t invhr_apparent if _st==1, cenind(censind) tdist transf(c) 
+
+drop xb_apparent hr_apparent invhr_apparent 
+
+********************************************************************************
+
+***********************************************
+* Model 4 and apparent performance - PRS ONLY *
+***********************************************
+stcox Iprs*, vce(cluster iecv_centre) nohr 
+
+* Apparent validation of this model (slope = 1, citl=0 by definition) * 
+* Harrell's C * 
+predict xb_apparent, xb
+gen hr_apparent = exp(xb)
+gen invhr_apparent = 1/hr_apparent 
+somersd _t invhr_apparent if _st==1, cenind(censind) tdist transf(c) 
+
+drop xb_apparent hr_apparent invhr_apparent 
+
+********************************************************************************
+* Run the bootstrapping in R - much quicker * 
+/*
+************************
+* Bootstrap validation *
+************************
+
+********************************************************************************
+*/ 
+clear 
+log close 
+
+
+log using "UK Biobank\log\_5_c_integrated_modelling_cox_IECV.smcl", replace 
+
+*******************************************************
+* Internal external cross-validation of Models 1 to 4 *
+*******************************************************
+
+* Open starting dataset * 
+use "UK Biobank\datasets\cohort_cox.dta", clear
+
+* Generate terms from mfp - all are linear, but keep centering/scaling * 
+gen double Iline__1 = linear_predictor-.9912831921 
+gen double Iprs___1 = prs_standard+.148714483  
+gen double Iage___1 = age_menarche-12.97421346 
+gen double Inumb__1 = number_births-1.830712566 
+
+stdescribe 
+  
+*****************************
+* Model 1 - Phenotypic only *
+*****************************
+
+* Run the IECV, save the predictions * 
+
+gen iecv_xb_model1 = . 
+gen prob_model1 = . 
+gen invprob_model1 = . 
+
+forval x = 1(1)19 {  
+   stcox Iline if iecv_centre!=`x' 
+   predict double xb if iecv_centre==`x', xb  
+   replace iecv_xb_model1 = xb if iecv_xb_model1==.
+   predict basesurv, basesurv 
+   summ basesurv if _t<=10 
+   replace basesurv = r(min)
+   replace prob_model1 = 1-basesurv^exp(iecv_xb_model1) if prob_model1==. 
+   replace invprob_model1 = 1/prob_model1 if invprob_model1==. 
+   drop xb basesurv
+   display `x' 
+} 
+
+* Run the performance metric estimation - store results for later plotting *
+
+cd "UK Biobank/estimates/cox/"
+
+* Calibration slope * 
+
+capture postutil clear    
+tempname slope_iecv_model1 
+postfile `slope_iecv_model1' slope slope_se val_size using slope_iecv_model1.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model1 if iecv_centre==`x', nohr 
+  local slope = r(table)[1,1] 
+  local slope_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `slope_iecv_model1' (`slope') (`slope_se') (`val_size') 
+  } 
+
+  postclose `slope_iecv_model1'  
+
+ * Calibration-in-the-large * 
+
+capture postutil clear    
+tempname citl_iecv_model1
+postfile `citl_iecv_model1' citl citl_se val_size using citl_iecv_model1.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model1 if iecv_centre==`x', offset(iecv_xb_model1) nohr 
+  local citl = r(table)[1,1] 
+  local citl_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `citl_iecv_model1' (`citl') (`citl_se') (`val_size') 
+  } 
+
+  postclose `citl_iecv_model1'  
+
+* Harrell's C * 
+
+capture postutil clear    
+tempname C_iecv_model1
+postfile `C_iecv_model1' beta st_err val_size using C_iecv_model1.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  somersd _t invprob_model1 if (_st==1 & iecv_centre==`x'), cenind(censind) tdist transf(c)  
+  local C = r(table)[1,1] 
+  local st_err = r(table)[2,1] 
+  local val_size = e(N) 
+  post `C_iecv_model1' (`C') (`st_err') (`val_size') 
+  } 
+
+  postclose `C_iecv_model1' 
+  
+* Royston & Sauerbrei's R2 and D statistics * 
+capture postutil clear    
+tempname RS_iecv_model1
+postfile `RS_iecv_model1' r2 st_errr2 D st_err_D val_size using RS_iecv_model1.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  str2d stcox prob_model1 if iecv_centre==`x' 
+  local r2 = r(r2) 
+  local st_errr2 = r(r2se) 
+  local D = r(D) 
+  local st_err_D = r(sD) 
+  local val_size = r(N) 
+  post `RS_iecv_model1' (`r2') (`st_errr2') (`D') (`st_err_D') (`val_size') 
+  } 
+
+  postclose `RS_iecv_model1' 
+
+  
+********************************************************************************
+********************************************************************************
+
+*********************************
+* Model 2 - Phenotypic plus PRS *
+*********************************
+
+* Run the IECV, save the predictions * 
+
+gen iecv_xb_model2 = . 
+gen prob_model2 = . 
+gen invprob_model2 = . 
+
+forval x = 1(1)19 {  
+   stcox c.Ilin##c.Iprs if iecv_centre!=`x' 
+   predict double xb if iecv_centre==`x', xb  
+   replace iecv_xb_model2 = xb if iecv_xb_model2==.
+   predict basesurv, basesurv 
+   summ basesurv if _t<=10 
+   replace basesurv = r(min)
+   replace prob_model2 = 1-basesurv^exp(iecv_xb_model2) if prob_model2==. 
+   replace invprob_model2 = 1/prob_model2 if invprob_model2==. 
+   drop xb basesurv
+   display `x'
+} 
+
+* Run the performance metric estimation - store results for later plotting *
+
+cd "UK Biobank/estimates/cox/"
+
+* Calibration slope * 
+
+capture postutil clear    
+tempname slope_iecv_model2 
+postfile `slope_iecv_model2' slope slope_se val_size using slope_iecv_model2.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model2 if iecv_centre==`x', nohr 
+  local slope = r(table)[1,1] 
+  local slope_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `slope_iecv_model2' (`slope') (`slope_se') (`val_size') 
+  } 
+
+  postclose `slope_iecv_model2'  
+
+ * Calibration-in-the-large * 
+
+capture postutil clear    
+tempname citl_iecv_model2
+postfile `citl_iecv_model2' citl citl_se val_size using citl_iecv_model2.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model2 if iecv_centre==`x', offset(iecv_xb_model2) nohr 
+  local citl = r(table)[1,1] 
+  local citl_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `citl_iecv_model2' (`citl') (`citl_se') (`val_size') 
+  } 
+
+  postclose `citl_iecv_model2'  
+
+* Harrell's C * 
+
+capture postutil clear    
+tempname C_iecv_model2
+postfile `C_iecv_model2' beta st_err val_size using C_iecv_model2.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  somersd _t invprob_model2 if (_st==1 & iecv_centre==`x'), cenind(censind) tdist transf(c)  
+  local C = r(table)[1,1] 
+  local st_err = r(table)[2,1] 
+  local val_size = e(N) 
+  post `C_iecv_model2' (`C') (`st_err') (`val_size') 
+  } 
+
+  postclose `C_iecv_model2' 
+  
+* Royston & Sauerbrei's R2 and D statistics * 
+capture postutil clear    
+tempname RS_iecv_model2
+postfile `RS_iecv_model2' r2 st_errr2 D st_err_D val_size using RS_iecv_model2.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  str2d stcox prob_model2 if iecv_centre==`x' 
+  local r2 = r(r2) 
+  local st_errr2 = r(r2se) 
+  local D = r(D) 
+  local st_err_D = r(sD) 
+  local val_size = r(N) 
+  post `RS_iecv_model2' (`r2') (`st_errr2') (`D') (`st_err_D') (`val_size') 
+  } 
+
+  postclose `RS_iecv_model2' 
+
+  
+********************************************************************************
+********************************************************************************
+
+
+**************************************
+* Model 3 - Phenotypic + PRS + Repro *
+**************************************
+
+* Run the IECV, save the predictions * 
+
+gen iecv_xb_model3 = . 
+gen prob_model3 = . 
+gen invprob_model3 = . 
+
+forval x = 1(1)19 {  
+   stcox c.Ilin##c.Iprs Inum Iage if iecv_centre!=`x' 
+   predict double xb if iecv_centre==`x', xb  
+   replace iecv_xb_model3 = xb if iecv_xb_model3==.
+   predict basesurv, basesurv 
+   summ basesurv if _t<=10 
+   replace basesurv = r(min) 
+   replace prob_model3 = 1-basesurv^exp(iecv_xb_model3) if prob_model3==. 
+   replace invprob_model3 = 1/prob_model3 if invprob_model3==. 
+   drop xb basesurv
+   display `x' 
+} 
+
+* Run the performance metric estimation - store results for later plotting *
+
+cd "UK Biobank/estimates/cox/"
+
+* Calibration slope * 
+
+capture postutil clear    
+tempname slope_iecv_model3 
+postfile `slope_iecv_model3' slope slope_se val_size using slope_iecv_model3.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model3 if iecv_centre==`x', nohr 
+  local slope = r(table)[1,1] 
+  local slope_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `slope_iecv_model3' (`slope') (`slope_se') (`val_size') 
+  } 
+
+  postclose `slope_iecv_model3'  
+
+ * Calibration-in-the-large * 
+
+capture postutil clear    
+tempname citl_iecv_model3
+postfile `citl_iecv_model3' citl citl_se val_size using citl_iecv_model3.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model3 if iecv_centre==`x', offset(iecv_xb_model3) nohr 
+  local citl = r(table)[1,1] 
+  local citl_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `citl_iecv_model3' (`citl') (`citl_se') (`val_size') 
+  } 
+
+  postclose `citl_iecv_model3'  
+
+* Harrell's C * 
+
+capture postutil clear    
+tempname C_iecv_model3
+postfile `C_iecv_model3' beta st_err val_size using C_iecv_model3.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  somersd _t invprob_model3 if (_st==1 & iecv_centre==`x'), cenind(censind) tdist transf(c)  
+  local C = r(table)[1,1] 
+  local st_err = r(table)[2,1] 
+  local val_size = e(N) 
+  post `C_iecv_model3' (`C') (`st_err') (`val_size') 
+  } 
+
+  postclose `C_iecv_model3' 
+  
+* Royston & Sauerbrei's R2 and D statistics * 
+capture postutil clear    
+tempname RS_iecv_model3
+postfile `RS_iecv_model3' r2 st_errr2 D st_err_D val_size using RS_iecv_model3.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  str2d stcox prob_model3 if iecv_centre==`x' 
+  local r2 = r(r2) 
+  local st_errr2 = r(r2se) 
+  local D = r(D) 
+  local st_err_D = r(sD) 
+  local val_size = r(N) 
+  post `RS_iecv_model3' (`r2') (`st_errr2') (`D') (`st_err_D') (`val_size') 
+  } 
+
+  postclose `RS_iecv_model3' 
+
+******************************************************************************** 
+********************************************************************************
+
+
+**********************
+* Model 4 - PRS only *
+********************** 
+
+* Run the IECV, save the predictions * 
+
+gen iecv_xb_model4 = . 
+gen prob_model4 = . 
+gen invprob_model4 = . 
+
+forval x = 1(1)19 {  
+   stcox Iprs if iecv_centre!=`x' 
+   predict double xb if iecv_centre==`x', xb  
+   replace iecv_xb_model4 = xb if iecv_xb_model4==.
+   predict basesurv, basesurv 
+   summ basesurv if _t<=10 
+   replace basesurv = r(min) 
+   replace prob_model4 = 1-basesurv^exp(iecv_xb_model4) if prob_model4==. 
+   replace invprob_model4 = 1/prob_model4 if invprob_model4==. 
+   drop xb basesurv
+   display `x'
+} 
+
+* Run the performance metric estimation - store results for later plotting *
+
+cd "UK Biobank/estimates/cox/"
+
+* Calibration slope * 
+
+capture postutil clear    
+tempname slope_iecv_model4 
+postfile `slope_iecv_model4' slope slope_se val_size using slope_iecv_model4.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model4 if iecv_centre==`x', nohr 
+  local slope = r(table)[1,1] 
+  local slope_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `slope_iecv_model4' (`slope') (`slope_se') (`val_size') 
+  } 
+
+  postclose `slope_iecv_model4'  
+
+ * Calibration-in-the-large * 
+
+capture postutil clear    
+tempname citl_iecv_model4
+postfile `citl_iecv_model4' citl citl_se val_size using citl_iecv_model4.dta , replace  
+   
+  forval x = 1(1)19 { 
+  stcox iecv_xb_model4 if iecv_centre==`x', offset(iecv_xb_model4) nohr 
+  local citl = r(table)[1,1] 
+  local citl_se = r(table)[2,1] 
+  local val_size = e(N) 
+  post `citl_iecv_model4' (`citl') (`citl_se') (`val_size') 
+  } 
+
+  postclose `citl_iecv_model4'  
+
+* Harrell's C * 
+
+capture postutil clear    
+tempname C_iecv_model4
+postfile `C_iecv_model4' beta st_err val_size using C_iecv_model4.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  somersd _t invprob_model4 if (_st==1 & iecv_centre==`x'), cenind(censind) tdist transf(c)  
+  local C = r(table)[1,1] 
+  local st_err = r(table)[2,1] 
+  local val_size = e(N) 
+  post `C_iecv_model4' (`C') (`st_err') (`val_size') 
+  } 
+
+  postclose `C_iecv_model4' 
+
+* Royston & Sauerbrei's R2 and D statistics * 
+capture postutil clear    
+tempname RS_iecv_model4
+postfile `RS_iecv_model4' r2 st_errr2 D st_err_D val_size using RS_iecv_model4.dta , replace  
+ 
+  forval x = 1(1)19 { 
+  str2d stcox prob_model4 if iecv_centre==`x' 
+  local r2 = r(r2) 
+  local st_errr2 = r(r2se) 
+  local D = r(D) 
+  local st_err_D = r(sD) 
+  local val_size = r(N) 
+  post `RS_iecv_model4' (`r2') (`st_errr2') (`D') (`st_err_D') (`val_size') 
+  } 
+
+  postclose `RS_iecv_model4'
+
+********************************************************************************
+********************************************************************************
+
+* Save the updated dataset, now with all the predictions we want for now * 
+
+save "UK Biobank\datasets\cohort_cox_validation.dta", replace 
+
+********************************************************************************
+********************************************************************************
+
+** Before we move to meta-analysing the region-level performance metrics, look at ethnic group performance ** 
+
+tab ethnic_group, m 
+
+* Make groupings out of granular classifications, due to low numbers of events * 
+* White, South Asian, Other Asian, Black, Chinese, Other/mixed = align with original report * 
+* Also add 'do not know or prefer not to answer' - did not drop these in data cleaning, as they are not predictors * 
+
+gen ethnicity = .   
+replace ethnicity = 1 if ethnic_group=="British" | ethnic_group=="Irish" | ethnic_group=="White" | ethnic_group=="Any other white background"  // White
+replace ethnicity = 2 if ethnic_group=="Asian or Asian British" | ethnic_group=="Bangladeshi" | ethnic_group=="Indian" | ethnic_group=="Pakistani" // South Asian
+replace ethnicity = 3 if ethnic_group=="Any other Asian background"      // Other Asian
+replace ethnicity = 4 if ethnic_group=="African" | ethnic_group=="Any other Black background" | ethnic_group=="Black or Black British" | ethnic_group=="Caribbean" // Black 
+replace ethnicity = 5 if ethnic_group=="Chinese" // Chinese 
+replace ethnicity = 6 if ethnic_group=="Any other mixed background" | ethnic_group=="Mixed" | ethnic_group=="Other ethnic group" | ethnic_group=="White and Asian" | ethnic_group=="White and Black African" | ethnic_group=="White and Black Caribbean"  //Other or mixed
+replace ethnicity = 7 if ethnic_group=="Do not know" | ethnic_group=="Prefer not to answer"  // Not known/prefer not to say/missing 
+
+la de ethnics 1 "White" 2 "South Asian" 3 "Other Asian" 4 "Black" 5 "Chinese" 6 "Other/mixed" 7 "Missing"
+la val ethnicity ethnics
+tab ethnicity, m 
+
+tab ethnicity _d  
+
+forval x = 1(1)7 {
+	disp `x' 
+	
+	disp "Model 1"
+	stcox iecv_xb_model1 if ethnicity==`x', nohr 
+	stcox iecv_xb_model1 if ethnicity==`x', offset(iecv_xb_model1) nohr
+	somersd _t invprob_model1 if (_st==1 & ethnicity==`x'), cenind(censind) tdist transf(c)
+	str2d stcox prob_model1 if ethnicity==`x'
+	
+	disp "Model 2"
+	stcox iecv_xb_model2 if ethnicity==`x', nohr 
+	stcox iecv_xb_model2 if ethnicity==`x', offset(iecv_xb_model2) nohr
+	somersd _t invprob_model2 if (_st==1 & ethnicity==`x'), cenind(censind) tdist transf(c)
+	str2d stcox prob_model2 if ethnicity==`x'
+	
+	disp "Model 3"
+	stcox iecv_xb_model3 if ethnicity==`x', nohr 
+	stcox iecv_xb_model3 if ethnicity==`x', offset(iecv_xb_model3) nohr
+	somersd _t invprob_model3 if (_st==1 & ethnicity==`x'), cenind(censind) tdist transf(c)
+	str2d stcox prob_model3 if ethnicity==`x'
+	
+	disp "Model 4"
+	stcox iecv_xb_model4 if ethnicity==`x', nohr 
+	stcox iecv_xb_model4 if ethnicity==`x', offset(iecv_xb_model1) nohr
+	somersd _t invprob_model4 if (_st==1 & ethnicity==`x'), cenind(censind) tdist transf(c)
+	str2d stcox prob_model4 if ethnicity==`x'
+}
+
+********************************************************************************
+********************************************************************************
+
+*************************
+** Results and figures **
+************************* 
+cd "UK Biobank/estimates/cox/" 
+
+** Histograms of predicted risks ** 
+
+histogram prob_model1, percent bin(100) graphregion(color(white)) xtitle("Predicted risk")
+graph save "Graph" "UK Biobank\results\Histogram_predictedrisks_EP1_model1.gph", replace 
+
+histogram prob_model2, percent bin(100) graphregion(color(white)) xtitle("Predicted risk")
+graph save "Graph" "UK Biobank\results\Histogram_predictedrisks_EP1_model2.gph", replace 
+
+histogram prob_model3, percent bin(100) graphregion(color(white)) xtitle("Predicted risk")
+graph save "Graph" "UK Biobank\results\Histogram_predictedrisks_EP1_model3.gph", replace 
+
+histogram prob_model4, percent bin(100) graphregion(color(white)) xtitle("Predicted risk")
+graph save "Graph" "UK Biobank\results\Histogram_predictedrisks_EP1_model4.gph", replace 
+
+********************************************************************************
+
+** Calibration plots **
+
+running pseudo prob_model1, ci leg(off) nopts title("Model 1 (phenotypic)", size(medium)) xtitle("Predicted event probability") ytitle("Observed event probability") graphregion(color(white))
+graph save "Graph" "UK Biobank\results\EP1_calibration_model1.gph", replace 
+
+running pseudo prob_model2, ci leg(off) nopts title("Model 2 (phenotypic + polygenic)", size(medium)) xtitle("Predicted event probability") ytitle("Observed event probability") graphregion(color(white))
+graph save "Graph" "UK Biobank\results\EP1_calibration_model2.gph", replace
+
+running pseudo prob_model3, ci leg(off) nopts title("Model 3 (phenotypic + polygenic + reproductive)", size(medium)) xtitle("Predicted event probability") ytitle("Observed event probability") graphregion(color(white))
+graph save "Graph" "UK Biobank\results\EP3_calibration_model3.gph", replace
+
+running pseudo prob_model4, ci leg(off) nopts title("Model 4 (polygenic)", size(medium)) xtitle("Predicted event probability") ytitle("Observed event probability") graphregion(color(white))
+graph save "Graph" "UK Biobank\results\EP1_calibration_model4.gph", replace
+
+********************************************************************************
+
+** Decision curve analysis ** 
+stdca prob_model1 prob_model2 prob_model3 prob_model4, prob(yes yes yes yes) xstart(0.001) xstop(0.1) timepoint(10) graphregion(color(white))
+graph save "Graph" "UK Biobank\results\DCA_EP1_4models.gph", replace 
+clear 
+
+********************************************************************************
+********************************************************************************
+
+
+** Model 1 ** 
+
+** Performance metric estimation using random effects meta-analysis ** 
+
+cd "UK Biobank\estimates\cox\"
+
+use "slope_iecv_model1.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)" 
+//end 
+meta set slope slope_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model1_iecv_slope.gph", replace  
+clear  
+ 
+use "citl_iecv_model1.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set citl citl_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model1_iecv_citl.gph", replace  
+clear 
+
+use "C_iecv_model1.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set beta st_err, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model1_iecv_C.gph", replace  
+clear  
+
+use "RS_iecv_model1.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set r2 st_errr2, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+
+meta set D st_err_D, studylab(Centre)
+meta summarize, random(sjonkman) se(khartung) predinterval(95)
+
+clear  
+  
+********************************************************************************
+********************************************************************************
+
+** Model 2 ** 
+use "slope_iecv_model2.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set slope slope_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model2_iecv_slope.gph", replace  
+clear  
+ 
+use "citl_iecv_model2.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)" 
+//end 
+meta set citl citl_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model2_iecv_citl.gph", replace  
+clear 
+
+use "C_iecv_model2.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)" 
+//end 
+meta set beta st_err, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model2_iecv_C.gph", replace  
+clear  
+
+use "RS_iecv_model2.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set r2 st_errr2, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+
+meta set D st_err_D, studylab(Centre)
+meta summarize, random(sjonkman) se(khartung) predinterval(95)
+clear 
+
+********************************************************************************
+********************************************************************************
+
+** Model 3 ** 
+use "slope_iecv_model3.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set slope slope_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model3_iecv_slope.gph", replace  
+clear  
+ 
+use "citl_iecv_model3.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set citl citl_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model3_iecv_citl.gph", replace  
+clear 
+
+use "C_iecv_model3.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set beta st_err, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model3_iecv_C.gph", replace  
+clear  
+
+use "RS_iecv_model3.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set r2 st_errr2, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+
+meta set D st_err_D, studylab(Centre)
+meta summarize, random(sjonkman) se(khartung) predinterval(95)
+clear 
+
+********************************************************************************
+********************************************************************************
+
+** Model 4 ** 
+use "slope_iecv_model4.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set slope slope_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model4_iecv_slope.gph", replace  
+clear  
+ 
+use "citl_iecv_model4.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set citl citl_se, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model4_iecv_citl.gph", replace  
+clear 
+
+use "C_iecv_model4.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set beta st_err, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+meta forestplot, random(sjonkman) se(khartung) predinterval(95) noohet noohom noosig
+graph save "Graph" "UK Biobank\results\EP1_model4_iecv_C.gph", replace  
+clear  
+
+use "RS_iecv_model4.dta", clear 
+input str50 Centre      
+"Barts (260/6,292)"                                
+"Birmingham (439/11,639)"   
+"Bristol (944/21,680)"      
+"Bury (589/13,554) "         
+"Wales (276/10,158)" 
+"Croydon (486/13,411)"        
+"Edinburgh (365/8,657)"       
+"Glasgow (417/9,330)"        
+"Hounslow (526/13,647)"       
+"Leeds (919/21,716)"         
+"Liverpool (665/15,931)"      
+"Manchester & Stockport (281/6,689)"  
+"Middlesborough (412/10,299)"      
+"Newcastle (786/18,249)"     
+"Nottingham (681/16,596)"  
+"Oxford (361/7,339)"         
+"Reading (703/14,532)"        
+"Sheffield (562/14,584)"     
+"Stoke (356/8,693)"
+//end 
+meta set r2 st_errr2, studylab(Centre) 
+meta summarize, random(sjonkman) se(khartung) predinterval(95) 
+
+meta set D st_err_D, studylab(Centre)
+meta summarize, random(sjonkman) se(khartung) predinterval(95)
+clear 
+
+********************************************************************************
+********************************************************************************
+
+log close 
