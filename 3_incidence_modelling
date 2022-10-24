@@ -1,8 +1,7 @@
 ********************************************************************************
 * Project: UKB_87818
-* Title: 5_cox_models
-* Inputs: cohort_breast_cancer_mortality 
-* Outputs: Final models, cross-validation results
+* Inputs: study_cohort
+* Outputs: Final models, internal-external cross-validation results
 * Author: Ash Darnell-Fish 
 * Date: 15th Oct 2022, v1 
 ********************************************************************************
