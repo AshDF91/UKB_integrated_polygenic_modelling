@@ -1,0 +1,69 @@
+#########################################################################################
+# Title: Bootstrap bias-corrected estimates of models fitted to UK Biobank study cohort # 
+# Inputs: cohort_cox.dta                                                                #
+# Outputs: R Markdown of results                                                        #
+#########################################################################################
+
+## Run in R - rms functionality faster than Stata ## 
+
+# Load packages needed #
+library(rms)
+library(survival) 
+library(haven) 
+
+## Import the data from Stata ##
+data <- as.data.frame(read_dta(UK Biobank/datasets/cohort_cox.dta"))
+
+# Rename time (_t) and event (_d) variables generated in Stata after stset 
+data$dt <- data$`_t`
+data$event <- data$`_d`
+
+# FP transformed versions of model parameters - scaled/centred #
+data$Ilin <- (data$linear_predictor-.9912831921) 
+data$Iprs <- (data$prs_standard+.148714483)  
+data$Iage <- (data$age_menarche-12.97421346) 
+data$Inum <- (data$number_births-1.830712566) 
+
+# Quick look #
+head(data) 
+
+# Fornat data for cph in rms to work #
+dd <- datadist(data)
+options(datadist='dd')
+
+# Model 1 = phenotypic model linear predictor only #
+model_1 <- cph(Surv(dt, event) ~ Ilin , x=T, y=T, data=data) 
+print(model_1) 
+
+# Model 2 = phenotypic model linear predcitor + polygenic risk + interaction # 
+model_2 <- cph(Surv(dt, event) ~ Ilin*Iprs, x=T, y=T, data=data) 
+print(model_2)
+
+# Model 3 = phenotypic model linear predictor + polygenic risk + interaction + age at menarche + number of live births #
+model_3 <- cph(Surv(dt, event) ~ Ilin*Iprs + Iage + Inum, x=T, y=T, data=data) 
+print(model_3)
+
+# Model 4 = polygenic risk alone #
+model_4 <- cph(Surv(dt, event) ~ Iprs, x=T, y=T, data=data) 
+print(model_4)
+
+# Run the bootstrap validation for each model - set seed for repro #
+
+set.seed(1892) 
+
+val1 <- validate(model_1, method="boot", B=500)
+
+val2 <- validate(model_2, method="boot", B=500)
+
+val3 <- validate(model_3, method="boot", B=500)
+
+val4 <- validate(model_4, method="boot", B=500)
+
+# Print them #
+val1
+val2
+val3
+val4 
+
+#####################################################################################
+##################################################################################### 
